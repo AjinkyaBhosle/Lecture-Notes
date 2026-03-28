@@ -191,9 +191,14 @@ export default function HomeScreen() {
             {lectures.length > 0 ? `${lectures.length} lecture${lectures.length > 1 ? 's' : ''}` : 'AI-powered note taking'}
           </Text>
         </View>
-        <View style={styles.headerIcon}>
-          <Ionicons name="book" size={22} color={COLORS.primary} />
-        </View>
+        <TouchableOpacity
+          testID="about-button"
+          style={styles.headerIcon}
+          onPress={() => router.push('/about')}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="information-circle-outline" size={22} color={COLORS.primary} />
+        </TouchableOpacity>
       </View>
 
       {/* Lecture List */}
