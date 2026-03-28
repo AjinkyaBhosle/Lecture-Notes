@@ -315,7 +315,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   deleteBtn: {
-    padding: SPACING.xs,
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cardMeta: {
     flexDirection: 'row',
