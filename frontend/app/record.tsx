@@ -129,17 +129,14 @@ export default function RecordScreen() {
 
     setUploading(true);
     try {
-      // Create lecture
+      // Create lecture locally
       const lecture = await api.createLecture('Untitled Lecture');
 
-      // Upload audio
-      await api.uploadAudio(lecture.id, uri, duration);
-
-      // Navigate to processing with language param
-      router.replace(`/processing/${lecture.id}?language=${selectedLang}`);
+      // Navigate to processing with audio URI and language
+      router.replace(`/processing/${lecture.id}?language=${selectedLang}&audioUri=${encodeURIComponent(uri)}&duration=${duration}`);
     } catch (err: any) {
       console.error('Save failed:', err);
-      Alert.alert('Upload Failed', err?.message || 'Could not upload the recording. Please try again.');
+      Alert.alert('Error', err?.message || 'Could not save the recording.');
       setUploading(false);
     }
   };

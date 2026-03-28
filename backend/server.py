@@ -1,116 +1,44 @@
 from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Query
-from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
-import asyncio
 import tempfile
 import math
-from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List, Optional
+import json
 import uuid
-from datetime import datetime, timezone
+from pathlib import Path
+from pydantic import BaseModel
 from pydub import AudioSegment
-import aiofiles
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
-
-# Create the main app
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Upload directory
-UPLOAD_DIR = ROOT_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
-
-# ─── Models ────────────────────────────────────────────
-class LectureCreate(BaseModel):
-    title: str = "Untitled Lecture"
-    folder_id: Optional[str] = None
-
-class LectureUpdate(BaseModel):
-    title: Optional[str] = None
-    folder_id: Optional[str] = None
-
-class LectureResponse(BaseModel):
-    id: str
-    title: str
-    status: str
-    duration_seconds: float = 0
-    transcript: Optional[str] = None
-    structured_notes: Optional[dict] = None
-    flashcards: Optional[list] = None
-    folder_id: Optional[str] = None
-    created_at: str
-    updated_at: str
-
-class FolderCreate(BaseModel):
-    name: str
-    color: str = "#4F46E5"
-
-class FolderResponse(BaseModel):
-    id: str
-    name: str
-    color: str
-    lecture_count: int = 0
-    created_at: str
-
-class ProcessingStatus(BaseModel):
-    lecture_id: str
-    status: str
-    step: str
-    progress: float
-    message: str
-
-# ─── Helpers ───────────────────────────────────────────
-
-def lecture_to_response(doc: dict) -> dict:
-    return {
-        "id": doc["id"],
-        "title": doc.get("title", "Untitled Lecture"),
-        "status": doc.get("status", "recorded"),
-        "duration_seconds": doc.get("duration_seconds", 0),
-        "transcript": doc.get("transcript"),
-        "structured_notes": doc.get("structured_notes"),
-        "flashcards": doc.get("flashcards"),
-        "folder_id": doc.get("folder_id"),
-        "created_at": doc.get("created_at", ""),
-        "updated_at": doc.get("updated_at", ""),
-    }
-
-# ─── Emergent LLM Integration (ACTIVE) ────────────────
+# ─── Emergent LLM Integration ─────────────────────────
 from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-async def transcribe_audio_emergent(file_path: str, language: str = "en") -> str:
-    """Transcribe audio using Emergent LLM key + Whisper"""
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
+def get_api_key():
+    key = os.environ.get("EMERGENT_LLM_KEY")
+    if not key:
         raise ValueError("EMERGENT_LLM_KEY not set")
+    return key
 
-    stt = OpenAISpeechToText(api_key=api_key)
-
-    # Check file size - Whisper limit is 25MB
+async def transcribe_audio(file_path: str, language: str = "en") -> str:
+    """Transcribe audio using Whisper"""
+    stt = OpenAISpeechToText(api_key=get_api_key())
     file_size = os.path.getsize(file_path)
-    max_size = 24 * 1024 * 1024  # 24MB to be safe
+    max_size = 24 * 1024 * 1024
 
     if file_size <= max_size:
-        # Direct transcription
         with open(file_path, "rb") as audio_file:
-            transcribe_kwargs = {
+            kwargs = {
                 "file": audio_file,
                 "model": "whisper-1",
                 "response_format": "json",
@@ -118,57 +46,42 @@ async def transcribe_audio_emergent(file_path: str, language: str = "en") -> str
                 "temperature": 0.0,
             }
             if language != "auto":
-                transcribe_kwargs["language"] = language
-            response = await stt.transcribe(**transcribe_kwargs)
+                kwargs["language"] = language
+            response = await stt.transcribe(**kwargs)
         return response.text
     else:
-        # Chunk large files
-        logger.info(f"Large file ({file_size / 1024 / 1024:.1f}MB), splitting into chunks...")
-        return await transcribe_large_audio(file_path, stt, language)
+        logger.info(f"Large file ({file_size / 1024 / 1024:.1f}MB), splitting...")
+        audio = AudioSegment.from_file(file_path)
+        chunk_ms = 10 * 60 * 1000
+        total_chunks = math.ceil(len(audio) / chunk_ms)
+        transcripts = []
+        for i in range(total_chunks):
+            chunk = audio[i * chunk_ms : (i + 1) * chunk_ms]
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                chunk.export(tmp.name, format="mp3", bitrate="64k")
+                tmp_path = tmp.name
+            try:
+                with open(tmp_path, "rb") as f:
+                    kwargs = {
+                        "file": f,
+                        "model": "whisper-1",
+                        "response_format": "json",
+                        "prompt": "College lecture. English, Hindi, Marathi, Hinglish.",
+                        "temperature": 0.0,
+                    }
+                    if language != "auto":
+                        kwargs["language"] = language
+                    response = await stt.transcribe(**kwargs)
+                transcripts.append(response.text)
+                logger.info(f"Chunk {i+1}/{total_chunks} done")
+            finally:
+                os.unlink(tmp_path)
+        return " ".join(transcripts)
 
-async def transcribe_large_audio(file_path: str, stt: OpenAISpeechToText, language: str = "en") -> str:
-    """Split large audio and transcribe in chunks"""
-    audio = AudioSegment.from_file(file_path)
-    chunk_duration_ms = 10 * 60 * 1000  # 10 minutes per chunk
-    total_chunks = math.ceil(len(audio) / chunk_duration_ms)
-    transcripts = []
-
-    for i in range(total_chunks):
-        start = i * chunk_duration_ms
-        end = min((i + 1) * chunk_duration_ms, len(audio))
-        chunk = audio[start:end]
-
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            chunk.export(tmp.name, format="mp3", bitrate="64k")
-            tmp_path = tmp.name
-
-        try:
-            with open(tmp_path, "rb") as f:
-                transcribe_kwargs = {
-                    "file": f,
-                    "model": "whisper-1",
-                    "response_format": "json",
-                    "prompt": "College lecture. English, Hindi, Marathi, Hinglish.",
-                    "temperature": 0.0,
-                }
-                if language != "auto":
-                    transcribe_kwargs["language"] = language
-                response = await stt.transcribe(**transcribe_kwargs)
-            transcripts.append(response.text)
-            logger.info(f"Chunk {i+1}/{total_chunks} transcribed")
-        finally:
-            os.unlink(tmp_path)
-
-    return " ".join(transcripts)
-
-async def generate_notes_emergent(transcript: str) -> dict:
-    """Generate structured notes using Emergent LLM key + GPT"""
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise ValueError("EMERGENT_LLM_KEY not set")
-
+async def generate_notes_from_transcript(transcript: str) -> dict:
+    """Generate structured notes from transcript using GPT"""
     chat = LlmChat(
-        api_key=api_key,
+        api_key=get_api_key(),
         session_id=f"notes-{uuid.uuid4()}",
         system_message="""You are an expert academic note-taker. Convert lecture transcripts into well-structured notes.
 Output MUST be valid JSON with this exact structure:
@@ -188,49 +101,28 @@ Remove all filler words, noise, and irrelevant conversation. Focus on academic c
 Output ONLY the JSON, no markdown formatting or code blocks."""
     ).with_model("openai", "gpt-5.2")
 
-    # For very long transcripts, chunk and summarize
     max_chars = 12000
     if len(transcript) > max_chars:
-        # Process in chunks and combine
         chunks = [transcript[i:i+max_chars] for i in range(0, len(transcript), max_chars)]
         all_notes = []
         for idx, chunk in enumerate(chunks):
             msg = UserMessage(text=f"Convert this lecture transcript part {idx+1}/{len(chunks)} into structured notes:\n\n{chunk}")
             response = await chat.send_message(msg)
             all_notes.append(response)
-
-        # Final consolidation
         combine_chat = LlmChat(
-            api_key=api_key,
+            api_key=get_api_key(),
             session_id=f"combine-{uuid.uuid4()}",
-            system_message="""Combine these partial lecture notes into one cohesive set of structured notes.
-Output MUST be valid JSON with this exact structure:
-{
-  "title": "Lecture topic title",
-  "summary": "2-3 sentence overview",
-  "sections": [
-    {
-      "heading": "Section heading",
-      "points": ["Key point 1", "Key point 2"],
-      "key_concepts": ["Concept 1"]
-    }
-  ],
-  "key_takeaways": ["Takeaway 1", "Takeaway 2"]
-}
-Output ONLY the JSON, no markdown formatting or code blocks."""
+            system_message="""Combine partial lecture notes into one cohesive set. Output MUST be valid JSON:
+{"title":"...","summary":"...","sections":[{"heading":"...","points":["..."],"key_concepts":["..."]}],"key_takeaways":["..."]}
+Output ONLY the JSON, no markdown or code blocks."""
         ).with_model("openai", "gpt-5.2")
-
-        combined = "\n\n---\n\n".join(all_notes)
-        msg = UserMessage(text=f"Combine these partial notes into one set:\n\n{combined}")
+        msg = UserMessage(text=f"Combine these partial notes:\n\n{'---'.join(all_notes)}")
         response = await combine_chat.send_message(msg)
     else:
         msg = UserMessage(text=f"Convert this lecture transcript into structured notes:\n\n{transcript}")
         response = await chat.send_message(msg)
 
-    # Parse JSON from response
-    import json
     try:
-        # Clean the response - remove markdown code blocks if present
         clean = response.strip()
         if clean.startswith("```"):
             clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
@@ -241,318 +133,28 @@ Output ONLY the JSON, no markdown formatting or code blocks."""
                 clean = clean[4:].strip()
         return json.loads(clean)
     except json.JSONDecodeError:
-        logger.error(f"Failed to parse notes JSON: {response[:200]}")
         return {
             "title": "Lecture Notes",
             "summary": "Notes generated from lecture transcript.",
-            "sections": [{"heading": "Transcript", "points": [response], "key_concepts": []}],
+            "sections": [{"heading": "Transcript", "points": [response[:2000]], "key_concepts": []}],
             "key_takeaways": ["Review the full transcript for details."]
         }
 
-# ─── Direct OpenAI Integration (COMMENTED OUT - For future scaling) ────
-# Uncomment below and replace EMERGENT_LLM_KEY with your OPENAI_API_KEY when scaling
-#
-# import openai
-#
-# async def transcribe_audio_openai(file_path: str) -> str:
-#     """Transcribe audio using direct OpenAI API key"""
-#     client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-#     file_size = os.path.getsize(file_path)
-#     max_size = 24 * 1024 * 1024
-#
-#     if file_size <= max_size:
-#         with open(file_path, "rb") as audio_file:
-#             response = await client.audio.transcriptions.create(
-#                 model="whisper-1",
-#                 file=audio_file,
-#                 response_format="json",
-#                 prompt="College lecture. English, Hindi, Marathi, Hinglish."
-#             )
-#         return response.text
-#     else:
-#         # Split and transcribe chunks
-#         audio = AudioSegment.from_file(file_path)
-#         chunk_ms = 10 * 60 * 1000
-#         transcripts = []
-#         for i in range(math.ceil(len(audio) / chunk_ms)):
-#             chunk = audio[i*chunk_ms : (i+1)*chunk_ms]
-#             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-#                 chunk.export(tmp.name, format="mp3", bitrate="64k")
-#                 with open(tmp.name, "rb") as f:
-#                     resp = await client.audio.transcriptions.create(
-#                         model="whisper-1", file=f, response_format="json"
-#                     )
-#                 transcripts.append(resp.text)
-#                 os.unlink(tmp.name)
-#         return " ".join(transcripts)
-#
-# async def generate_notes_openai(transcript: str) -> dict:
-#     """Generate structured notes using direct OpenAI API"""
-#     client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-#     response = await client.chat.completions.create(
-#         model="gpt-4o",
-#         messages=[
-#             {"role": "system", "content": "Convert transcripts to structured JSON notes..."},
-#             {"role": "user", "content": f"Convert this transcript:\n\n{transcript}"}
-#         ],
-#         response_format={"type": "json_object"}
-#     )
-#     return json.loads(response.choices[0].message.content)
-# ─── End Direct OpenAI (Commented Out) ─────────────────
-
-# ─── API Routes ────────────────────────────────────────
-
-@api_router.get("/")
-async def root():
-    return {"message": "AI Lecture Companion API"}
-
-@api_router.post("/lectures", response_model=LectureResponse)
-async def create_lecture(data: LectureCreate):
-    now = datetime.now(timezone.utc).isoformat()
-    lecture = {
-        "id": str(uuid.uuid4()),
-        "title": data.title,
-        "status": "recorded",
-        "duration_seconds": 0,
-        "transcript": None,
-        "structured_notes": None,
-        "flashcards": None,
-        "folder_id": data.folder_id,
-        "audio_path": None,
-        "created_at": now,
-        "updated_at": now,
-    }
-    await db.lectures.insert_one(lecture)
-    return lecture_to_response(lecture)
-
-@api_router.get("/lectures", response_model=List[LectureResponse])
-async def list_lectures():
-    # Optimized: exclude large transcript/notes fields in list view
-    projection = {"_id": 0, "id": 1, "title": 1, "status": 1, "duration_seconds": 1, "created_at": 1, "updated_at": 1}
-    lectures = await db.lectures.find({}, projection).sort("created_at", -1).to_list(100)
-    return [lecture_to_response(lec) for lec in lectures]
-
-@api_router.get("/lectures/{lecture_id}", response_model=LectureResponse)
-async def get_lecture(lecture_id: str):
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-    return lecture_to_response(lecture)
-
-@api_router.delete("/lectures/{lecture_id}")
-async def delete_lecture(lecture_id: str):
-    # Optimized: only fetch fields needed for delete
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0, "id": 1, "audio_path": 1})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-    # Delete audio file if exists
-    if lecture.get("audio_path") and os.path.exists(lecture["audio_path"]):
-        os.unlink(lecture["audio_path"])
-    await db.lectures.delete_one({"id": lecture_id})
-    return {"message": "Lecture deleted"}
-
-@api_router.put("/lectures/{lecture_id}", response_model=LectureResponse)
-async def update_lecture(lecture_id: str, data: LectureUpdate):
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-    updates = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    if data.title is not None:
-        updates["title"] = data.title
-    if data.folder_id is not None:
-        updates["folder_id"] = data.folder_id if data.folder_id != "" else None
-    await db.lectures.update_one({"id": lecture_id}, {"$set": updates})
-    lecture.update(updates)
-    return lecture_to_response(lecture)
-
-@api_router.post("/lectures/{lecture_id}/upload-audio")
-async def upload_audio(lecture_id: str, file: UploadFile = File(...), duration: float = 0):
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-
-    # Save audio file
-    file_ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "m4a"
-    file_path = str(UPLOAD_DIR / f"{lecture_id}.{file_ext}")
-
-    async with aiofiles.open(file_path, "wb") as f:
-        content = await file.read()
-        await f.write(content)
-
-    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    logger.info(f"Audio uploaded: {file_path} ({file_size_mb:.1f}MB, {duration}s)")
-
-    await db.lectures.update_one(
-        {"id": lecture_id},
-        {"$set": {
-            "audio_path": file_path,
-            "duration_seconds": duration,
-            "status": "uploaded",
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }}
-    )
-    return {"message": "Audio uploaded", "file_size_mb": round(file_size_mb, 2)}
-
-@api_router.post("/lectures/{lecture_id}/process", response_model=LectureResponse)
-async def process_lecture(lecture_id: str, language: str = Query(default="en", description="Language code: en, hi, mr")):
-    """Full pipeline: transcribe audio → generate structured notes"""
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-    if not lecture.get("audio_path") or not os.path.exists(lecture.get("audio_path", "")):
-        raise HTTPException(status_code=400, detail="No audio file found. Upload audio first.")
-
-    # Update status to processing
-    await db.lectures.update_one(
-        {"id": lecture_id},
-        {"$set": {"status": "transcribing", "updated_at": datetime.now(timezone.utc).isoformat()}}
-    )
-
-    try:
-        # Step 1: Transcribe
-        logger.info(f"Transcribing lecture {lecture_id}...")
-        transcript = await transcribe_audio_emergent(lecture["audio_path"], language=language)
-        logger.info(f"Transcription complete: {len(transcript)} chars")
-
-        await db.lectures.update_one(
-            {"id": lecture_id},
-            {"$set": {
-                "transcript": transcript,
-                "status": "generating_notes",
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }}
-        )
-
-        # Step 2: Generate notes
-        logger.info(f"Generating notes for lecture {lecture_id}...")
-        notes = await generate_notes_emergent(transcript)
-        logger.info("Notes generated successfully")
-
-        now = datetime.now(timezone.utc).isoformat()
-        await db.lectures.update_one(
-            {"id": lecture_id},
-            {"$set": {
-                "structured_notes": notes,
-                "status": "completed",
-                "title": notes.get("title", lecture.get("title", "Untitled Lecture")),
-                "updated_at": now
-            }}
-        )
-
-        updated = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
-        return lecture_to_response(updated)
-
-    except Exception as e:
-        logger.error(f"Processing failed for lecture {lecture_id}: {str(e)}")
-        await db.lectures.update_one(
-            {"id": lecture_id},
-            {"$set": {"status": "error", "updated_at": datetime.now(timezone.utc).isoformat()}}
-        )
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
-
-@api_router.get("/lectures/{lecture_id}/status")
-async def get_processing_status(lecture_id: str):
-    # Optimized: only fetch status field
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0, "id": 1, "status": 1})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-
-    status = lecture.get("status", "recorded")
-    step_map = {
-        "recorded": {"step": "idle", "progress": 0, "message": "Ready to process"},
-        "uploaded": {"step": "uploaded", "progress": 10, "message": "Audio uploaded"},
-        "transcribing": {"step": "transcribing", "progress": 30, "message": "Transcribing audio..."},
-        "generating_notes": {"step": "generating", "progress": 70, "message": "Generating structured notes..."},
-        "completed": {"step": "done", "progress": 100, "message": "Notes ready!"},
-        "error": {"step": "error", "progress": 0, "message": "Processing failed"},
-    }
-    info = step_map.get(status, {"step": "unknown", "progress": 0, "message": status})
-    return {
-        "lecture_id": lecture_id,
-        "status": status,
-        **info
-    }
-
-@api_router.get("/lectures/{lecture_id}/audio")
-async def get_audio(lecture_id: str):
-    """Stream audio file for playback"""
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0, "audio_path": 1})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-    audio_path = lecture.get("audio_path")
-    if not audio_path or not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(audio_path, media_type="audio/m4a", filename=f"{lecture_id}.m4a")
-
-# ─── Folder Routes ─────────────────────────────────────
-
-@api_router.post("/folders", response_model=FolderResponse)
-async def create_folder(data: FolderCreate):
-    now = datetime.now(timezone.utc).isoformat()
-    folder = {
-        "id": str(uuid.uuid4()),
-        "name": data.name,
-        "color": data.color,
-        "created_at": now,
-    }
-    await db.folders.insert_one(folder)
-    return {**folder, "lecture_count": 0}
-
-@api_router.get("/folders")
-async def list_folders():
-    folders = await db.folders.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    result = []
-    for f in folders:
-        count = await db.lectures.count_documents({"folder_id": f["id"]})
-        result.append({**f, "lecture_count": count})
-    return result
-
-@api_router.delete("/folders/{folder_id}")
-async def delete_folder(folder_id: str):
-    folder = await db.folders.find_one({"id": folder_id}, {"_id": 0})
-    if not folder:
-        raise HTTPException(status_code=404, detail="Folder not found")
-    # Unassign lectures from this folder
-    await db.lectures.update_many({"folder_id": folder_id}, {"$set": {"folder_id": None}})
-    await db.folders.delete_one({"id": folder_id})
-    return {"message": "Folder deleted"}
-
-# ─── Flashcard Routes ──────────────────────────────────
-
-@api_router.post("/lectures/{lecture_id}/flashcards")
-async def generate_flashcards(lecture_id: str):
-    """Generate flashcards from lecture notes using AI"""
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
-    if not lecture:
-        raise HTTPException(status_code=404, detail="Lecture not found")
-    if not lecture.get("structured_notes"):
-        raise HTTPException(status_code=400, detail="No notes available. Process the lecture first.")
-
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
-    if not api_key:
-        raise ValueError("EMERGENT_LLM_KEY not set")
-
-    notes = lecture["structured_notes"]
-    notes_text = json.dumps(notes, indent=2)
-
+async def generate_flashcards_from_notes(notes: dict) -> list:
+    """Generate flashcards from notes using GPT"""
     chat = LlmChat(
-        api_key=api_key,
+        api_key=get_api_key(),
         session_id=f"flashcards-{uuid.uuid4()}",
         system_message="""Generate flashcards from lecture notes for exam preparation.
-Output MUST be valid JSON array with this structure:
-[
-  {"front": "Question or concept", "back": "Answer or explanation"},
-  ...
-]
-Create 8-15 flashcards covering all key concepts, definitions, and important points.
-Questions should test understanding, not just recall.
+Output MUST be valid JSON array:
+[{"front": "Question or concept", "back": "Answer or explanation"}, ...]
+Create 8-15 flashcards covering all key concepts. Questions should test understanding.
 Output ONLY the JSON array, no markdown or code blocks."""
     ).with_model("openai", "gpt-5.2")
 
-    msg = UserMessage(text=f"Generate flashcards from these lecture notes:\n\n{notes_text}")
+    msg = UserMessage(text=f"Generate flashcards from these notes:\n\n{json.dumps(notes, indent=2)}")
     response = await chat.send_message(msg)
 
-    import json as json_mod
     try:
         clean = response.strip()
         if clean.startswith("```"):
@@ -562,17 +164,90 @@ Output ONLY the JSON array, no markdown or code blocks."""
             clean = clean.strip()
             if clean.startswith("json"):
                 clean = clean[4:].strip()
-        flashcards = json_mod.loads(clean)
-    except json_mod.JSONDecodeError:
-        flashcards = [{"front": "Review your notes", "back": response[:500]}]
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        return [{"front": "Review your notes", "back": response[:500]}]
 
-    await db.lectures.update_one(
-        {"id": lecture_id},
-        {"$set": {"flashcards": flashcards, "updated_at": datetime.now(timezone.utc).isoformat()}}
-    )
-    return {"flashcards": flashcards, "count": len(flashcards)}
+# ─── Direct OpenAI (Commented Out — For Future Scaling) ────
+# import openai
+# async def transcribe_audio_openai(file_path, language="en"):
+#     client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+#     with open(file_path, "rb") as f:
+#         resp = await client.audio.transcriptions.create(model="whisper-1", file=f, language=language)
+#     return resp.text
+#
+# async def generate_notes_openai(transcript):
+#     client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+#     resp = await client.chat.completions.create(
+#         model="gpt-4o",
+#         messages=[{"role":"system","content":"Convert to structured JSON notes..."},
+#                   {"role":"user","content":transcript}],
+#         response_format={"type":"json_object"}
+#     )
+#     return json.loads(resp.choices[0].message.content)
+# ─── End Direct OpenAI ─────────────────────────────────
 
-# Include the router
+# ─── API Routes (Thin Proxy — No Storage) ──────────────
+
+@api_router.get("/")
+async def root():
+    return {"message": "AI Lecture Companion API — Thin Proxy"}
+
+class TranscriptRequest(BaseModel):
+    transcript: str
+
+class NotesRequest(BaseModel):
+    notes: dict
+
+@api_router.post("/transcribe")
+async def api_transcribe(file: UploadFile = File(...), language: str = Query(default="en")):
+    """Upload audio → get transcript back. Audio is deleted after processing."""
+    with tempfile.NamedTemporaryFile(suffix=f".{file.filename.split('.')[-1] if file.filename and '.' in file.filename else 'm4a'}", delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    file_size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
+    logger.info(f"Transcribing audio: {file_size_mb:.1f}MB, language={language}")
+
+    try:
+        transcript = await transcribe_audio(tmp_path, language)
+        logger.info(f"Transcription complete: {len(transcript)} chars")
+        return {"transcript": transcript}
+    except Exception as e:
+        logger.error(f"Transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    finally:
+        # Always delete audio file — no storage on server
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+            logger.info("Audio file deleted after processing")
+
+@api_router.post("/generate-notes")
+async def api_generate_notes(data: TranscriptRequest):
+    """Send transcript → get structured notes back."""
+    logger.info(f"Generating notes from {len(data.transcript)} chars")
+    try:
+        notes = await generate_notes_from_transcript(data.transcript)
+        logger.info("Notes generated successfully")
+        return {"notes": notes}
+    except Exception as e:
+        logger.error(f"Note generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Note generation failed: {str(e)}")
+
+@api_router.post("/generate-flashcards")
+async def api_generate_flashcards(data: NotesRequest):
+    """Send notes → get flashcards back."""
+    logger.info("Generating flashcards")
+    try:
+        flashcards = await generate_flashcards_from_notes(data.notes)
+        logger.info(f"Generated {len(flashcards)} flashcards")
+        return {"flashcards": flashcards, "count": len(flashcards)}
+    except Exception as e:
+        logger.error(f"Flashcard generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Flashcard generation failed: {str(e)}")
+
+# Include router
 app.include_router(api_router)
 
 app.add_middleware(
@@ -582,7 +257,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
