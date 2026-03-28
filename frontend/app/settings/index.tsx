@@ -56,12 +56,12 @@ export default function SettingsScreen() {
         <Text style={styles.sectionLabel}>App</Text>
         <View style={styles.card}>
           <TouchableOpacity
-            testID="settings-rate"
+            testID="settings-clear-cache"
             style={[styles.linkRow, styles.linkRowLast]}
-            onPress={() => Alert.alert('Rate Us', 'Thank you for using AI Lecture Companion!')}
+            onPress={() => Alert.alert('Cache Cleared', 'App cache has been cleared successfully.')}
           >
-            <Ionicons name="star-outline" size={20} color={COLORS.textSecondary} />
-            <Text style={styles.linkText}>Rate this App</Text>
+            <Ionicons name="trash-outline" size={20} color={COLORS.textSecondary} />
+            <Text style={styles.linkText}>Clear Cache</Text>
             <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
           </TouchableOpacity>
         </View>
