@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { useAudioPlayer } from 'expo-audio';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../../src/utils/theme';
 import { api, Lecture, StructuredNotes } from '../../src/utils/api';
 
@@ -109,6 +110,28 @@ export default function NotesScreen() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const audioUrl = id ? api.getAudioUrl(id) : '';
+  const player = useAudioPlayer(audioUrl);
+
+  useEffect(() => {
+    if (player) {
+      const sub = player.addListener('playingChange', (event: { isPlaying: boolean }) => {
+        setIsPlaying(event.isPlaying);
+      });
+      return () => sub.remove();
+    }
+  }, [player]);
+
+  const togglePlayback = () => {
+    if (!player) return;
+    if (isPlaying) {
+      player.pause();
+    } else {
+      player.play();
+    }
+  };
 
   useEffect(() => {
     if (id) fetchLecture();
@@ -262,6 +285,29 @@ export default function NotesScreen() {
             </View>
           )}
         </View>
+
+        {/* Audio Playback */}
+        <TouchableOpacity
+          testID="play-audio-button"
+          style={styles.audioPlayer}
+          onPress={togglePlayback}
+          activeOpacity={0.7}
+        >
+          <View style={styles.playIconWrap}>
+            <Ionicons
+              name={isPlaying ? 'pause' : 'play'}
+              size={20}
+              color={COLORS.primary}
+            />
+          </View>
+          <View style={styles.audioInfo}>
+            <Text style={styles.audioLabel}>Lecture Recording</Text>
+            <Text style={styles.audioSubLabel}>
+              {isPlaying ? 'Playing...' : 'Tap to play'}
+            </Text>
+          </View>
+          <Ionicons name="musical-notes-outline" size={18} color={COLORS.textMuted} />
+        </TouchableOpacity>
 
         {/* Summary */}
         <View style={styles.summaryBox}>
@@ -434,6 +480,38 @@ const styles = StyleSheet.create({
   metaText: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.textMuted,
+  },
+  audioPlayer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.md,
+    marginBottom: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    gap: SPACING.md,
+  },
+  playIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioInfo: {
+    flex: 1,
+  },
+  audioLabel: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  audioSubLabel: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    marginTop: 2,
   },
   summaryBox: {
     backgroundColor: COLORS.primaryLight,

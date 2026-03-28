@@ -92,9 +92,12 @@ export const api = {
     return res.json();
   },
 
-  processLecture: (id: string): Promise<Lecture> =>
-    request(`/lectures/${id}/process`, { method: 'POST' }),
+  processLecture: (id: string, language: string = 'en'): Promise<Lecture> =>
+    request(`/lectures/${id}/process?language=${language}`, { method: 'POST' }),
 
   getProcessingStatus: (id: string): Promise<ProcessingStatus> =>
     request(`/lectures/${id}/status`),
+
+  getAudioUrl: (id: string): string =>
+    `${API_BASE}/lectures/${id}/audio`,
 };

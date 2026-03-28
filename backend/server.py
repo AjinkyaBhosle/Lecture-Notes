@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Query
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -77,7 +78,7 @@ def lecture_to_response(doc: dict) -> dict:
 from emergentintegrations.llm.openai import OpenAISpeechToText
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-async def transcribe_audio_emergent(file_path: str) -> str:
+async def transcribe_audio_emergent(file_path: str, language: str = "en") -> str:
     """Transcribe audio using Emergent LLM key + Whisper"""
     api_key = os.environ.get("EMERGENT_LLM_KEY")
     if not api_key:
@@ -96,6 +97,7 @@ async def transcribe_audio_emergent(file_path: str) -> str:
                 file=audio_file,
                 model="whisper-1",
                 response_format="json",
+                language=language,
                 prompt="This is a college lecture. May contain English, Hindi, Marathi, or mixed Hinglish.",
                 temperature=0.0
             )
@@ -103,9 +105,9 @@ async def transcribe_audio_emergent(file_path: str) -> str:
     else:
         # Chunk large files
         logger.info(f"Large file ({file_size / 1024 / 1024:.1f}MB), splitting into chunks...")
-        return await transcribe_large_audio(file_path, stt)
+        return await transcribe_large_audio(file_path, stt, language)
 
-async def transcribe_large_audio(file_path: str, stt: OpenAISpeechToText) -> str:
+async def transcribe_large_audio(file_path: str, stt: OpenAISpeechToText, language: str = "en") -> str:
     """Split large audio and transcribe in chunks"""
     audio = AudioSegment.from_file(file_path)
     chunk_duration_ms = 10 * 60 * 1000  # 10 minutes per chunk
@@ -127,6 +129,7 @@ async def transcribe_large_audio(file_path: str, stt: OpenAISpeechToText) -> str
                     file=f,
                     model="whisper-1",
                     response_format="json",
+                    language=language,
                     prompt="College lecture. English, Hindi, Marathi, Hinglish.",
                     temperature=0.0
                 )
@@ -366,7 +369,7 @@ async def upload_audio(lecture_id: str, file: UploadFile = File(...), duration: 
     return {"message": "Audio uploaded", "file_size_mb": round(file_size_mb, 2)}
 
 @api_router.post("/lectures/{lecture_id}/process", response_model=LectureResponse)
-async def process_lecture(lecture_id: str):
+async def process_lecture(lecture_id: str, language: str = Query(default="en", description="Language code: en, hi, mr")):
     """Full pipeline: transcribe audio → generate structured notes"""
     lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
     if not lecture:
@@ -383,7 +386,7 @@ async def process_lecture(lecture_id: str):
     try:
         # Step 1: Transcribe
         logger.info(f"Transcribing lecture {lecture_id}...")
-        transcript = await transcribe_audio_emergent(lecture["audio_path"])
+        transcript = await transcribe_audio_emergent(lecture["audio_path"], language=language)
         logger.info(f"Transcription complete: {len(transcript)} chars")
 
         await db.lectures.update_one(
@@ -444,6 +447,17 @@ async def get_processing_status(lecture_id: str):
         "status": status,
         **info
     }
+
+@api_router.get("/lectures/{lecture_id}/audio")
+async def get_audio(lecture_id: str):
+    """Stream audio file for playback"""
+    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0, "audio_path": 1})
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    audio_path = lecture.get("audio_path")
+    if not audio_path or not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return FileResponse(audio_path, media_type="audio/m4a", filename=f"{lecture_id}.m4a")
 
 # Include the router
 app.include_router(api_router)
