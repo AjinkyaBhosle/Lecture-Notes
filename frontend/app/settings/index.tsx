@@ -56,15 +56,6 @@ export default function SettingsScreen() {
         <Text style={styles.sectionLabel}>App</Text>
         <View style={styles.card}>
           <TouchableOpacity
-            testID="settings-about"
-            style={styles.linkRow}
-            onPress={() => router.push('/about')}
-          >
-            <Ionicons name="information-circle-outline" size={20} color={COLORS.textSecondary} />
-            <Text style={styles.linkText}>About & Help</Text>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-          </TouchableOpacity>
-          <TouchableOpacity
             testID="settings-rate"
             style={[styles.linkRow, styles.linkRowLast]}
             onPress={() => Alert.alert('Rate Us', 'Thank you for using AI Lecture Companion!')}
