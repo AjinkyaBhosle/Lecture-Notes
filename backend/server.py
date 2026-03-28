@@ -39,9 +39,11 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # ─── Models ────────────────────────────────────────────
 class LectureCreate(BaseModel):
     title: str = "Untitled Lecture"
+    folder_id: Optional[str] = None
 
 class LectureUpdate(BaseModel):
     title: Optional[str] = None
+    folder_id: Optional[str] = None
 
 class LectureResponse(BaseModel):
     id: str
@@ -50,8 +52,21 @@ class LectureResponse(BaseModel):
     duration_seconds: float = 0
     transcript: Optional[str] = None
     structured_notes: Optional[dict] = None
+    flashcards: Optional[list] = None
+    folder_id: Optional[str] = None
     created_at: str
     updated_at: str
+
+class FolderCreate(BaseModel):
+    name: str
+    color: str = "#4F46E5"
+
+class FolderResponse(BaseModel):
+    id: str
+    name: str
+    color: str
+    lecture_count: int = 0
+    created_at: str
 
 class ProcessingStatus(BaseModel):
     lecture_id: str
@@ -70,6 +85,8 @@ def lecture_to_response(doc: dict) -> dict:
         "duration_seconds": doc.get("duration_seconds", 0),
         "transcript": doc.get("transcript"),
         "structured_notes": doc.get("structured_notes"),
+        "flashcards": doc.get("flashcards"),
+        "folder_id": doc.get("folder_id"),
         "created_at": doc.get("created_at", ""),
         "updated_at": doc.get("updated_at", ""),
     }
@@ -299,6 +316,8 @@ async def create_lecture(data: LectureCreate):
         "duration_seconds": 0,
         "transcript": None,
         "structured_notes": None,
+        "flashcards": None,
+        "folder_id": data.folder_id,
         "audio_path": None,
         "created_at": now,
         "updated_at": now,
@@ -340,6 +359,8 @@ async def update_lecture(lecture_id: str, data: LectureUpdate):
     updates = {"updated_at": datetime.now(timezone.utc).isoformat()}
     if data.title is not None:
         updates["title"] = data.title
+    if data.folder_id is not None:
+        updates["folder_id"] = data.folder_id if data.folder_id != "" else None
     await db.lectures.update_one({"id": lecture_id}, {"$set": updates})
     lecture.update(updates)
     return lecture_to_response(lecture)
@@ -462,6 +483,94 @@ async def get_audio(lecture_id: str):
     if not audio_path or not os.path.exists(audio_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(audio_path, media_type="audio/m4a", filename=f"{lecture_id}.m4a")
+
+# ─── Folder Routes ─────────────────────────────────────
+
+@api_router.post("/folders", response_model=FolderResponse)
+async def create_folder(data: FolderCreate):
+    now = datetime.now(timezone.utc).isoformat()
+    folder = {
+        "id": str(uuid.uuid4()),
+        "name": data.name,
+        "color": data.color,
+        "created_at": now,
+    }
+    await db.folders.insert_one(folder)
+    return {**folder, "lecture_count": 0}
+
+@api_router.get("/folders")
+async def list_folders():
+    folders = await db.folders.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    result = []
+    for f in folders:
+        count = await db.lectures.count_documents({"folder_id": f["id"]})
+        result.append({**f, "lecture_count": count})
+    return result
+
+@api_router.delete("/folders/{folder_id}")
+async def delete_folder(folder_id: str):
+    folder = await db.folders.find_one({"id": folder_id}, {"_id": 0})
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    # Unassign lectures from this folder
+    await db.lectures.update_many({"folder_id": folder_id}, {"$set": {"folder_id": None}})
+    await db.folders.delete_one({"id": folder_id})
+    return {"message": "Folder deleted"}
+
+# ─── Flashcard Routes ──────────────────────────────────
+
+@api_router.post("/lectures/{lecture_id}/flashcards")
+async def generate_flashcards(lecture_id: str):
+    """Generate flashcards from lecture notes using AI"""
+    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
+    if not lecture:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+    if not lecture.get("structured_notes"):
+        raise HTTPException(status_code=400, detail="No notes available. Process the lecture first.")
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise ValueError("EMERGENT_LLM_KEY not set")
+
+    notes = lecture["structured_notes"]
+    notes_text = json.dumps(notes, indent=2)
+
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"flashcards-{uuid.uuid4()}",
+        system_message="""Generate flashcards from lecture notes for exam preparation.
+Output MUST be valid JSON array with this structure:
+[
+  {"front": "Question or concept", "back": "Answer or explanation"},
+  ...
+]
+Create 8-15 flashcards covering all key concepts, definitions, and important points.
+Questions should test understanding, not just recall.
+Output ONLY the JSON array, no markdown or code blocks."""
+    ).with_model("openai", "gpt-5.2")
+
+    msg = UserMessage(text=f"Generate flashcards from these lecture notes:\n\n{notes_text}")
+    response = await chat.send_message(msg)
+
+    import json as json_mod
+    try:
+        clean = response.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\n", 1)[1] if "\n" in clean else clean[3:]
+            if clean.endswith("```"):
+                clean = clean[:-3]
+            clean = clean.strip()
+            if clean.startswith("json"):
+                clean = clean[4:].strip()
+        flashcards = json_mod.loads(clean)
+    except json_mod.JSONDecodeError:
+        flashcards = [{"front": "Review your notes", "back": response[:500]}]
+
+    await db.lectures.update_one(
+        {"id": lecture_id},
+        {"$set": {"flashcards": flashcards, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"flashcards": flashcards, "count": len(flashcards)}
 
 # Include the router
 app.include_router(api_router)

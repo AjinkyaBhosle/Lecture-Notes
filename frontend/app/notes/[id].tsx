@@ -152,7 +152,7 @@ export default function NotesScreen() {
   const saveTitle = async () => {
     if (!id || !titleValue.trim()) return;
     try {
-      await api.updateLecture(id, titleValue.trim());
+      await api.updateLecture(id, { title: titleValue.trim() });
       setLecture((prev) => prev ? { ...prev, title: titleValue.trim() } : prev);
     } catch (err) {
       console.error('Failed to update title');
@@ -379,6 +379,15 @@ export default function NotesScreen() {
       {/* Bottom Action Bar */}
       <View style={styles.bottomBar}>
         <TouchableOpacity
+          testID="bottom-flashcards-button"
+          style={styles.bottomBtn}
+          onPress={() => router.push(`/flashcards/${id}`)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="copy-outline" size={20} color={COLORS.primary} />
+          <Text style={styles.bottomBtnText}>Flashcards</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           testID="bottom-share-button"
           style={styles.bottomBtn}
           onPress={handleShare}
@@ -394,7 +403,7 @@ export default function NotesScreen() {
           activeOpacity={0.8}
         >
           <Ionicons name="download-outline" size={20} color={COLORS.textWhite} />
-          <Text style={styles.bottomBtnPrimaryText}>Export PDF</Text>
+          <Text style={styles.bottomBtnPrimaryText}>PDF</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

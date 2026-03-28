@@ -25,6 +25,8 @@ export interface Lecture {
   duration_seconds: number;
   transcript: string | null;
   structured_notes: StructuredNotes | null;
+  flashcards: Flashcard[] | null;
+  folder_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +42,19 @@ export interface StructuredNotes {
   key_takeaways: string[];
 }
 
+export interface Flashcard {
+  front: string;
+  back: string;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  color: string;
+  lecture_count: number;
+  created_at: string;
+}
+
 export interface ProcessingStatus {
   lecture_id: string;
   status: string;
@@ -49,10 +64,11 @@ export interface ProcessingStatus {
 }
 
 export const api = {
-  createLecture: (title: string = 'Untitled Lecture'): Promise<Lecture> =>
+  // Lectures
+  createLecture: (title: string = 'Untitled Lecture', folder_id?: string): Promise<Lecture> =>
     request('/lectures', {
       method: 'POST',
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, folder_id: folder_id || null }),
     }),
 
   listLectures: (): Promise<Lecture[]> => request('/lectures'),
@@ -62,10 +78,10 @@ export const api = {
   deleteLecture: (id: string) =>
     request(`/lectures/${id}`, { method: 'DELETE' }),
 
-  updateLecture: (id: string, title: string): Promise<Lecture> =>
+  updateLecture: (id: string, data: { title?: string; folder_id?: string | null }): Promise<Lecture> =>
     request(`/lectures/${id}`, {
       method: 'PUT',
-      body: JSON.stringify({ title }),
+      body: JSON.stringify(data),
     }),
 
   uploadAudio: async (lectureId: string, fileUri: string, duration: number): Promise<any> => {
@@ -76,14 +92,12 @@ export const api = {
       name: `${lectureId}.m4a`,
     };
     formData.append('file', fileInfo as any);
-    
+
     const url = `${API_BASE}/lectures/${lectureId}/upload-audio?duration=${duration}`;
     const res = await fetch(url, {
       method: 'POST',
       body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
     if (!res.ok) {
       const error = await res.text();
@@ -100,4 +114,19 @@ export const api = {
 
   getAudioUrl: (id: string): string =>
     `${API_BASE}/lectures/${id}/audio`,
+
+  generateFlashcards: (id: string): Promise<{ flashcards: Flashcard[]; count: number }> =>
+    request(`/lectures/${id}/flashcards`, { method: 'POST' }),
+
+  // Folders
+  listFolders: (): Promise<Folder[]> => request('/folders'),
+
+  createFolder: (name: string, color: string = '#4F46E5'): Promise<Folder> =>
+    request('/folders', {
+      method: 'POST',
+      body: JSON.stringify({ name, color }),
+    }),
+
+  deleteFolder: (id: string) =>
+    request(`/folders/${id}`, { method: 'DELETE' }),
 };

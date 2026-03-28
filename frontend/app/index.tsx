@@ -191,14 +191,24 @@ export default function HomeScreen() {
             {lectures.length > 0 ? `${lectures.length} lecture${lectures.length > 1 ? 's' : ''}` : 'AI-powered note taking'}
           </Text>
         </View>
-        <TouchableOpacity
-          testID="about-button"
-          style={styles.headerIcon}
-          onPress={() => router.push('/about')}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="information-circle-outline" size={22} color={COLORS.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerIcons}>
+          <TouchableOpacity
+            testID="settings-button"
+            style={styles.headerIcon}
+            onPress={() => router.push('/settings')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="settings-outline" size={20} color={COLORS.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="about-button"
+            style={styles.headerIcon}
+            onPress={() => router.push('/about')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="information-circle-outline" size={22} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Lecture List */}
@@ -272,12 +282,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   headerIcon: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: BORDER_RADIUS.md,
     backgroundColor: COLORS.primaryLight,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  headerIcons: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
   },
   listContent: {
     paddingHorizontal: SPACING.xl,
