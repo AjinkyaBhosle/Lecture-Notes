@@ -52,20 +52,6 @@ export default function SettingsScreen() {
           ))}
         </View>
 
-        {/* Links */}
-        <Text style={styles.sectionLabel}>App</Text>
-        <View style={styles.card}>
-          <TouchableOpacity
-            testID="settings-clear-cache"
-            style={[styles.linkRow, styles.linkRowLast]}
-            onPress={() => Alert.alert('Cache Cleared', 'App cache has been cleared successfully.')}
-          >
-            <Ionicons name="trash-outline" size={20} color={COLORS.textSecondary} />
-            <Text style={styles.linkText}>Clear Cache</Text>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-          </TouchableOpacity>
-        </View>
-
         {/* Version */}
         <View style={styles.versionWrap}>
           <Text style={styles.versionText}>AI Lecture Companion v1.0.0</Text>

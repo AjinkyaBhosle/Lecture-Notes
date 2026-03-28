@@ -19,7 +19,7 @@ const LANGUAGES = [
   { code: 'en', label: 'English', desc: 'Also handles Hinglish & En+Mar' },
   { code: 'hi', label: 'Hindi', desc: 'Devanagari output' },
   { code: 'mr', label: 'Marathi', desc: 'Devanagari output' },
-  { code: 'auto', label: 'Auto (experimental)', desc: 'Let AI detect language' },
+  { code: 'auto', label: 'Auto-detect', desc: 'Let AI detect language' },
 ];
 
 export default function RecordScreen() {
