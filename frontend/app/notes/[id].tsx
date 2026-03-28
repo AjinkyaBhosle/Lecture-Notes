@@ -333,13 +333,22 @@ export default function NotesScreen() {
       {/* Bottom Action Bar */}
       <View style={styles.bottomBar}>
         <TouchableOpacity
+          testID="bottom-player-button"
+          style={styles.bottomBtn}
+          onPress={() => router.push(`/player/${id}`)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="headset-outline" size={18} color={COLORS.primary} />
+          <Text style={styles.bottomBtnText}>Listen</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           testID="bottom-flashcards-button"
           style={styles.bottomBtn}
           onPress={() => router.push(`/flashcards/${id}`)}
           activeOpacity={0.7}
         >
-          <Ionicons name="copy-outline" size={20} color={COLORS.primary} />
-          <Text style={styles.bottomBtnText}>Flashcards</Text>
+          <Ionicons name="copy-outline" size={18} color={COLORS.primary} />
+          <Text style={styles.bottomBtnText}>Cards</Text>
         </TouchableOpacity>
         <TouchableOpacity
           testID="bottom-share-button"
@@ -347,7 +356,7 @@ export default function NotesScreen() {
           onPress={handleShare}
           activeOpacity={0.7}
         >
-          <Ionicons name="share-social" size={20} color={COLORS.primary} />
+          <Ionicons name="share-social" size={18} color={COLORS.primary} />
           <Text style={styles.bottomBtnText}>Share</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -356,7 +365,7 @@ export default function NotesScreen() {
           onPress={handleExportPdf}
           activeOpacity={0.8}
         >
-          <Ionicons name="download-outline" size={20} color={COLORS.textWhite} />
+          <Ionicons name="download-outline" size={18} color={COLORS.textWhite} />
           <Text style={styles.bottomBtnPrimaryText}>PDF</Text>
         </TouchableOpacity>
       </View>

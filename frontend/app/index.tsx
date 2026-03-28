@@ -8,12 +8,14 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  TextInput,
+  ScrollView,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../src/utils/theme';
-import { api, Lecture } from '../src/utils/api';
+import { api, Lecture, Folder } from '../src/utils/api';
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -104,15 +106,20 @@ function LectureCard({ lecture, onPress, onDelete }: { lecture: Lecture; onPress
 export default function HomeScreen() {
   const router = useRouter();
   const [lectures, setLectures] = useState<Lecture[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
 
-  const fetchLectures = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const data = await api.listLectures();
-      setLectures(data);
+      const [lecs, folds] = await Promise.all([api.listLectures(), api.listFolders()]);
+      setLectures(lecs);
+      setFolders(folds);
     } catch (err) {
-      console.error('Failed to fetch lectures:', err);
+      console.error('Failed to fetch data:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -121,9 +128,39 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchLectures();
-    }, [fetchLectures])
+      fetchData();
+    }, [fetchData])
   );
+
+  const filteredLectures = selectedFolder
+    ? lectures.filter((l) => l.folder_id === selectedFolder)
+    : lectures;
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    try {
+      await api.createFolder(newFolderName.trim());
+      setNewFolderName('');
+      setShowNewFolder(false);
+      fetchData();
+    } catch {
+      Alert.alert('Error', 'Failed to create folder');
+    }
+  };
+
+  const handleDeleteFolder = (folder: Folder) => {
+    Alert.alert('Delete Folder', `Delete "${folder.name}"? Lectures inside won't be deleted.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          await api.deleteFolder(folder.id);
+          if (selectedFolder === folder.id) setSelectedFolder(null);
+          fetchData();
+        },
+      },
+    ]);
+  };
 
   const handleDelete = (lecture: Lecture) => {
     Alert.alert(
@@ -211,10 +248,64 @@ export default function HomeScreen() {
         </View>
       </View>
 
+      {/* Folders */}
+      {(folders.length > 0 || showNewFolder) && (
+        <View style={styles.folderSection}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.folderScroll}>
+            <TouchableOpacity
+              testID="folder-all"
+              style={[styles.folderChip, !selectedFolder && styles.folderChipActive]}
+              onPress={() => setSelectedFolder(null)}
+            >
+              <Text style={[styles.folderChipText, !selectedFolder && styles.folderChipTextActive]}>All</Text>
+            </TouchableOpacity>
+            {folders.map((f) => (
+              <TouchableOpacity
+                key={f.id}
+                testID={`folder-${f.id}`}
+                style={[styles.folderChip, selectedFolder === f.id && styles.folderChipActive]}
+                onPress={() => setSelectedFolder(selectedFolder === f.id ? null : f.id)}
+                onLongPress={() => handleDeleteFolder(f)}
+              >
+                <Ionicons name="folder" size={14} color={selectedFolder === f.id ? COLORS.primary : COLORS.textMuted} />
+                <Text style={[styles.folderChipText, selectedFolder === f.id && styles.folderChipTextActive]}>{f.name}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              testID="add-folder-button"
+              style={styles.addFolderChip}
+              onPress={() => setShowNewFolder(true)}
+            >
+              <Ionicons name="add" size={16} color={COLORS.primary} />
+            </TouchableOpacity>
+          </ScrollView>
+          {showNewFolder && (
+            <View style={styles.newFolderRow}>
+              <TextInput
+                testID="new-folder-input"
+                style={styles.newFolderInput}
+                placeholder="Folder name..."
+                placeholderTextColor={COLORS.textMuted}
+                value={newFolderName}
+                onChangeText={setNewFolderName}
+                onSubmitEditing={handleCreateFolder}
+                autoFocus
+              />
+              <TouchableOpacity testID="save-folder-btn" onPress={handleCreateFolder} style={styles.saveFolderBtn}>
+                <Ionicons name="checkmark" size={20} color={COLORS.textWhite} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setShowNewFolder(false); setNewFolderName(''); }} style={styles.cancelFolderBtn}>
+                <Ionicons name="close" size={20} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
+
       {/* Lecture List */}
       <FlatList
         testID="lectures-list"
-        data={lectures}
+        data={filteredLectures}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <LectureCard
@@ -224,13 +315,13 @@ export default function HomeScreen() {
           />
         )}
         ListEmptyComponent={renderEmptyState}
-        contentContainerStyle={lectures.length === 0 ? styles.emptyContainer : styles.listContent}
+        contentContainerStyle={filteredLectures.length === 0 ? styles.emptyContainer : styles.listContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => {
               setRefreshing(true);
-              fetchLectures();
+              fetchData();
             }}
             colors={[COLORS.primary]}
             tintColor={COLORS.primary}
@@ -406,5 +497,78 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
+  },
+  folderSection: {
+    paddingBottom: SPACING.sm,
+  },
+  folderScroll: {
+    paddingHorizontal: SPACING.xl,
+    gap: SPACING.sm,
+  },
+  folderChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.full,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  folderChipActive: {
+    backgroundColor: COLORS.primaryLight,
+    borderColor: COLORS.primary,
+  },
+  folderChipText: {
+    fontSize: FONT_SIZES.xs,
+    fontWeight: '500',
+    color: COLORS.textMuted,
+  },
+  folderChipTextActive: {
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  addFolderChip: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  newFolderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    paddingHorizontal: SPACING.xl,
+    paddingTop: SPACING.sm,
+  },
+  newFolderInput: {
+    flex: 1,
+    height: 40,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: SPACING.md,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textPrimary,
+  },
+  saveFolderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelFolderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.surfaceAlt,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

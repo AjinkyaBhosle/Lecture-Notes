@@ -30,8 +30,8 @@ def get_api_key():
         raise ValueError("EMERGENT_LLM_KEY not set")
     return key
 
-async def transcribe_audio(file_path: str, language: str = "en") -> str:
-    """Transcribe audio using Whisper"""
+async def transcribe_audio(file_path: str, language: str = "en") -> dict:
+    """Transcribe audio using Whisper with timestamps"""
     stt = OpenAISpeechToText(api_key=get_api_key())
     file_size = os.path.getsize(file_path)
     max_size = 24 * 1024 * 1024
@@ -41,22 +41,29 @@ async def transcribe_audio(file_path: str, language: str = "en") -> str:
             kwargs = {
                 "file": audio_file,
                 "model": "whisper-1",
-                "response_format": "json",
+                "response_format": "verbose_json",
+                "timestamp_granularities": ["segment"],
                 "prompt": "This is a college lecture. May contain English, Hindi, Marathi, or mixed Hinglish.",
                 "temperature": 0.0,
             }
             if language != "auto":
                 kwargs["language"] = language
             response = await stt.transcribe(**kwargs)
-        return response.text
+        segments = []
+        if hasattr(response, 'segments') and response.segments:
+            for seg in response.segments:
+                segments.append({"start": seg.start, "end": seg.end, "text": seg.text.strip()})
+        return {"text": response.text, "segments": segments}
     else:
         logger.info(f"Large file ({file_size / 1024 / 1024:.1f}MB), splitting...")
         audio = AudioSegment.from_file(file_path)
         chunk_ms = 10 * 60 * 1000
         total_chunks = math.ceil(len(audio) / chunk_ms)
-        transcripts = []
+        all_text = []
+        all_segments = []
         for i in range(total_chunks):
             chunk = audio[i * chunk_ms : (i + 1) * chunk_ms]
+            offset_seconds = (i * chunk_ms) / 1000.0
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
                 chunk.export(tmp.name, format="mp3", bitrate="64k")
                 tmp_path = tmp.name
@@ -65,18 +72,26 @@ async def transcribe_audio(file_path: str, language: str = "en") -> str:
                     kwargs = {
                         "file": f,
                         "model": "whisper-1",
-                        "response_format": "json",
+                        "response_format": "verbose_json",
+                        "timestamp_granularities": ["segment"],
                         "prompt": "College lecture. English, Hindi, Marathi, Hinglish.",
                         "temperature": 0.0,
                     }
                     if language != "auto":
                         kwargs["language"] = language
                     response = await stt.transcribe(**kwargs)
-                transcripts.append(response.text)
+                all_text.append(response.text)
+                if hasattr(response, 'segments') and response.segments:
+                    for seg in response.segments:
+                        all_segments.append({
+                            "start": seg.start + offset_seconds,
+                            "end": seg.end + offset_seconds,
+                            "text": seg.text.strip()
+                        })
                 logger.info(f"Chunk {i+1}/{total_chunks} done")
             finally:
                 os.unlink(tmp_path)
-        return " ".join(transcripts)
+        return {"text": " ".join(all_text), "segments": all_segments}
 
 async def generate_notes_from_transcript(transcript: str) -> dict:
     """Generate structured notes from transcript using GPT"""
@@ -211,9 +226,9 @@ async def api_transcribe(file: UploadFile = File(...), language: str = Query(def
     logger.info(f"Transcribing audio: {file_size_mb:.1f}MB, language={language}")
 
     try:
-        transcript = await transcribe_audio(tmp_path, language)
-        logger.info(f"Transcription complete: {len(transcript)} chars")
-        return {"transcript": transcript}
+        result = await transcribe_audio(tmp_path, language)
+        logger.info(f"Transcription complete: {len(result['text'])} chars, {len(result['segments'])} segments")
+        return {"transcript": result["text"], "segments": result["segments"]}
     except Exception as e:
         logger.error(f"Transcription failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")

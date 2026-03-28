@@ -10,11 +10,19 @@ export interface Lecture {
   status: string;
   duration_seconds: number;
   transcript: string | null;
+  segments: TranscriptSegment[] | null;
+  audio_uri: string | null;
   structured_notes: StructuredNotes | null;
   flashcards: Flashcard[] | null;
   folder_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
 }
 
 export interface StructuredNotes {
@@ -75,6 +83,8 @@ export const api = {
       status: 'recorded',
       duration_seconds: 0,
       transcript: null,
+      segments: null,
+      audio_uri: null,
       structured_notes: null,
       flashcards: null,
       folder_id: folder_id || null,
@@ -124,8 +134,8 @@ export const api = {
 
   // ── AI Processing (Backend Proxy) ──
   async transcribeAudio(lectureId: string, fileUri: string, duration: number, language: string = 'en'): Promise<string> {
-    // Update local lecture status
-    await api._updateLectureField(lectureId, { status: 'transcribing', duration_seconds: duration });
+    // Save audio URI locally
+    await api._updateLectureField(lectureId, { status: 'transcribing', duration_seconds: duration, audio_uri: fileUri });
 
     const formData = new FormData();
     formData.append('file', { uri: fileUri, type: 'audio/m4a', name: `${lectureId}.m4a` } as any);
@@ -142,7 +152,11 @@ export const api = {
       throw new Error(err || 'Transcription failed');
     }
     const data = await res.json();
-    await api._updateLectureField(lectureId, { transcript: data.transcript, status: 'generating_notes' });
+    await api._updateLectureField(lectureId, {
+      transcript: data.transcript,
+      segments: data.segments || [],
+      status: 'generating_notes',
+    });
     return data.transcript;
   },
 
