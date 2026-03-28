@@ -301,7 +301,9 @@ async def create_lecture(data: LectureCreate):
 
 @api_router.get("/lectures", response_model=List[LectureResponse])
 async def list_lectures():
-    lectures = await db.lectures.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    # Optimized: exclude large transcript/notes fields in list view
+    projection = {"_id": 0, "id": 1, "title": 1, "status": 1, "duration_seconds": 1, "created_at": 1, "updated_at": 1}
+    lectures = await db.lectures.find({}, projection).sort("created_at", -1).to_list(100)
     return [lecture_to_response(lec) for lec in lectures]
 
 @api_router.get("/lectures/{lecture_id}", response_model=LectureResponse)
@@ -313,7 +315,8 @@ async def get_lecture(lecture_id: str):
 
 @api_router.delete("/lectures/{lecture_id}")
 async def delete_lecture(lecture_id: str):
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
+    # Optimized: only fetch fields needed for delete
+    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0, "id": 1, "audio_path": 1})
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")
     # Delete audio file if exists
@@ -421,7 +424,8 @@ async def process_lecture(lecture_id: str):
 
 @api_router.get("/lectures/{lecture_id}/status")
 async def get_processing_status(lecture_id: str):
-    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0})
+    # Optimized: only fetch status field
+    lecture = await db.lectures.find_one({"id": lecture_id}, {"_id": 0, "id": 1, "status": 1})
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")
 
