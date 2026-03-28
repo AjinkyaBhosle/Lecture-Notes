@@ -93,14 +93,16 @@ async def transcribe_audio_emergent(file_path: str, language: str = "en") -> str
     if file_size <= max_size:
         # Direct transcription
         with open(file_path, "rb") as audio_file:
-            response = await stt.transcribe(
-                file=audio_file,
-                model="whisper-1",
-                response_format="json",
-                language=language,
-                prompt="This is a college lecture. May contain English, Hindi, Marathi, or mixed Hinglish.",
-                temperature=0.0
-            )
+            transcribe_kwargs = {
+                "file": audio_file,
+                "model": "whisper-1",
+                "response_format": "json",
+                "prompt": "This is a college lecture. May contain English, Hindi, Marathi, or mixed Hinglish.",
+                "temperature": 0.0,
+            }
+            if language != "auto":
+                transcribe_kwargs["language"] = language
+            response = await stt.transcribe(**transcribe_kwargs)
         return response.text
     else:
         # Chunk large files
@@ -125,14 +127,16 @@ async def transcribe_large_audio(file_path: str, stt: OpenAISpeechToText, langua
 
         try:
             with open(tmp_path, "rb") as f:
-                response = await stt.transcribe(
-                    file=f,
-                    model="whisper-1",
-                    response_format="json",
-                    language=language,
-                    prompt="College lecture. English, Hindi, Marathi, Hinglish.",
-                    temperature=0.0
-                )
+                transcribe_kwargs = {
+                    "file": f,
+                    "model": "whisper-1",
+                    "response_format": "json",
+                    "prompt": "College lecture. English, Hindi, Marathi, Hinglish.",
+                    "temperature": 0.0,
+                }
+                if language != "auto":
+                    transcribe_kwargs["language"] = language
+                response = await stt.transcribe(**transcribe_kwargs)
             transcripts.append(response.text)
             logger.info(f"Chunk {i+1}/{total_chunks} transcribed")
         finally:

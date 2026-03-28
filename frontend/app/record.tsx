@@ -15,11 +15,19 @@ import { api } from '../src/utils/api';
 
 type RecordingState = 'idle' | 'recording' | 'paused' | 'stopped';
 
+const LANGUAGES = [
+  { code: 'en', label: 'English', desc: 'Also handles Hinglish & En+Mar' },
+  { code: 'hi', label: 'Hindi', desc: 'Devanagari output' },
+  { code: 'mr', label: 'Marathi', desc: 'Devanagari output' },
+  { code: 'auto', label: 'Auto (experimental)', desc: 'Let AI detect language' },
+];
+
 export default function RecordScreen() {
   const router = useRouter();
   const [state, setState] = useState<RecordingState>('idle');
   const [duration, setDuration] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [selectedLang, setSelectedLang] = useState('en');
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const permissionGranted = useRef(false);
@@ -127,8 +135,8 @@ export default function RecordScreen() {
       // Upload audio
       await api.uploadAudio(lecture.id, uri, duration);
 
-      // Navigate to processing
-      router.replace(`/processing/${lecture.id}`);
+      // Navigate to processing with language param
+      router.replace(`/processing/${lecture.id}?language=${selectedLang}`);
     } catch (err: any) {
       console.error('Save failed:', err);
       Alert.alert('Upload Failed', err?.message || 'Could not upload the recording. Please try again.');
@@ -303,9 +311,38 @@ export default function RecordScreen() {
         )}
       </View>
 
-      {/* Tips */}
+      {/* Language Selector + Tips */}
       {isIdle && (
         <View style={styles.tipsSection}>
+          <Text style={styles.tipsTitle}>Lecture Language</Text>
+          <View style={styles.langGrid}>
+            {LANGUAGES.map((lang) => (
+              <TouchableOpacity
+                key={lang.code}
+                testID={`lang-${lang.code}`}
+                style={[
+                  styles.langChip,
+                  selectedLang === lang.code && styles.langChipActive,
+                ]}
+                onPress={() => setSelectedLang(lang.code)}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.langChipText,
+                    selectedLang === lang.code && styles.langChipTextActive,
+                  ]}
+                >
+                  {lang.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={styles.langDesc}>
+            {LANGUAGES.find((l) => l.code === selectedLang)?.desc}
+          </Text>
+
+          <View style={styles.tipsDivider} />
           <Text style={styles.tipsTitle}>Tips for best results</Text>
           <View style={styles.tipItem}>
             <Ionicons name="volume-medium-outline" size={16} color={COLORS.textMuted} />
@@ -499,6 +536,42 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.textSecondary,
     marginBottom: SPACING.xs,
+  },
+  langGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm,
+  },
+  langChip: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: BORDER_RADIUS.full,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+  },
+  langChipActive: {
+    backgroundColor: COLORS.primaryLight,
+    borderColor: COLORS.primary,
+  },
+  langChipText: {
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '500',
+    color: COLORS.textSecondary,
+  },
+  langChipTextActive: {
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  langDesc: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontStyle: 'italic',
+  },
+  tipsDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: SPACING.sm,
   },
   tipItem: {
     flexDirection: 'row',

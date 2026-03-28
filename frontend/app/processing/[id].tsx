@@ -23,13 +23,14 @@ const STEPS: { key: Step; label: string; icon: string }[] = [
 ];
 
 export default function ProcessingScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, language } = useLocalSearchParams<{ id: string; language?: string }>();
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState<Step>('uploading');
   const [errorMsg, setErrorMsg] = useState('');
   const [processing, setProcessing] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const processStarted = useRef(false);
+  const lectureLanguage = (language as string) || 'en';
 
   useEffect(() => {
     if (id && !processStarted.current) {
@@ -71,7 +72,7 @@ export default function ProcessingScreen() {
 
     // Trigger processing
     try {
-      await api.processLecture(id);
+      await api.processLecture(id, lectureLanguage);
       // If we get here, processing completed (the API waits for completion)
       setCurrentStep('done');
       if (pollingRef.current) clearInterval(pollingRef.current);
