@@ -141,10 +141,10 @@ export const api = {
     formData.append('file', { uri: fileUri, type: 'audio/m4a', name: `${lectureId}.m4a` } as any);
 
     const url = `${API_BASE}/transcribe?language=${language}`;
+    // Do NOT set Content-Type header — React Native sets it automatically with correct boundary
     const res = await fetch(url, {
       method: 'POST',
       body: formData,
-      headers: { 'Content-Type': 'multipart/form-data' },
     });
     if (!res.ok) {
       await api._updateLectureField(lectureId, { status: 'error' });
