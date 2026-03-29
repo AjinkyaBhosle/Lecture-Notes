@@ -223,13 +223,11 @@ async def generate_flashcards_from_notes(notes: dict) -> list:
     resp = await client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Generate flashcards from lecture notes for exam preparation. Output MUST be valid JSON array: [{\"front\": \"Question or concept\", \"back\": \"Answer or explanation\"}, ...]. Create 8-15 flashcards. Output ONLY JSON."},
+            {"role": "system", "content": "Generate flashcards from lecture notes for exam preparation. Output MUST be valid JSON object with a 'flashcards' key: {\"flashcards\": [{\"front\": \"Question\", \"back\": \"Answer\"}, ...]}. Create 8-15 flashcards. Output ONLY the JSON object."},
             {"role": "user", "content": f"Generate flashcards from these notes:\n\n{json.dumps(notes, indent=2)}"}
         ],
         response_format={"type": "json_object"}
     )
-    # Wrap in key if necessary or handle direct array if using gpt-4o's json_object (which usually requires a key in schema)
-    # Actually, official docs say json_object works best if you tell it to return an object.
     response = resp.choices[0].message.content
 
     try:
@@ -241,7 +239,20 @@ async def generate_flashcards_from_notes(notes: dict) -> list:
             clean = clean.strip()
             if clean.startswith("json"):
                 clean = clean[4:].strip()
-        return json.loads(clean)
+        result = json.loads(clean)
+        # Handle both array and object wrapper
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            # Try common keys
+            for key in ['flashcards', 'cards', 'items', 'data']:
+                if key in result and isinstance(result[key], list):
+                    return result[key]
+            # Return first list value found
+            for v in result.values():
+                if isinstance(v, list):
+                    return v
+        return [result] if result else []
     except json.JSONDecodeError:
         return [{"front": "Review your notes", "back": response[:500]}]
 

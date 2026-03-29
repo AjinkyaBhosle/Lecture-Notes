@@ -385,7 +385,6 @@ export default function NotesScreen() {
                 </TouchableOpacity>
                 <Text selectable style={styles.transcriptText}>{lecture.transcript}</Text>
               </View>
-              </View>
             )}
           </View>
         )}
