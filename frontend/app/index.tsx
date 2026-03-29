@@ -249,9 +249,9 @@ export default function HomeScreen() {
       </View>
 
       {/* Folders */}
-      {(folders.length > 0 || showNewFolder) && (
-        <View style={styles.folderSection}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.folderScroll}>
+      <View style={styles.folderSection}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.folderScroll}>
+          {folders.length > 0 && (
             <TouchableOpacity
               testID="folder-all"
               style={[styles.folderChip, !selectedFolder && styles.folderChipActive]}
@@ -259,7 +259,8 @@ export default function HomeScreen() {
             >
               <Text style={[styles.folderChipText, !selectedFolder && styles.folderChipTextActive]}>All</Text>
             </TouchableOpacity>
-            {folders.map((f) => (
+          )}
+          {folders.map((f) => (
               <TouchableOpacity
                 key={f.id}
                 testID={`folder-${f.id}`}
@@ -300,7 +301,6 @@ export default function HomeScreen() {
             </View>
           )}
         </View>
-      )}
 
       {/* Lecture List */}
       <FlatList
