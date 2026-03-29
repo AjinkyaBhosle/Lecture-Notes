@@ -1,0 +1,83 @@
+{
+  "theme": "Light",
+  "archetype": "Soft Utility",
+  "global_rules": [
+    "Mobile-first responsive design. Max-width on desktop (e.g., max-w-md mx-auto min-h-screen border-x border-zinc-200) to simulate app view.",
+    "Use generous padding (p-4 to p-6) for breathing room.",
+    "Include data-testid on all interactive elements.",
+    "Ensure WCAG AA contrast for text.",
+    "Use optical alignment for icons and text."
+  ],
+  "typography": {
+    "primary_font": "Manrope, sans-serif",
+    "secondary_font": "Figtree, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "hierarchy": {
+      "h1": "text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900",
+      "h2": "text-xl font-semibold tracking-tight text-zinc-900",
+      "h3": "text-lg font-medium text-zinc-900",
+      "body": "text-base text-zinc-700 leading-relaxed",
+      "caption": "text-sm text-zinc-500",
+      "timer": "text-5xl sm:text-6xl font-mono font-light tracking-tighter text-zinc-900"
+    }
+  },
+  "colors": {
+    "background": "bg-zinc-50",
+    "surface": "bg-white",
+    "primary": "bg-indigo-600",
+    "primary_hover": "hover:bg-indigo-700",
+    "primary_active": "active:bg-indigo-800",
+    "primary_text": "text-indigo-600",
+    "primary_light": "bg-indigo-50",
+    "danger": "bg-red-500",
+    "danger_hover": "hover:bg-red-600",
+    "text_main": "text-zinc-900",
+    "text_muted": "text-zinc-500",
+    "border": "border-zinc-200"
+  },
+  "components": {
+    "header": "sticky top-0 bg-white/80 backdrop-blur-xl border-b border-zinc-200 z-50 px-4 py-3 flex items-center justify-between",
+    "card": "bg-white border border-zinc-200 rounded-2xl p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow",
+    "record_button": "w-20 h-20 rounded-full bg-indigo-600 text-white shadow-xl shadow-indigo-600/20 flex items-center justify-center hover:scale-105 transition-transform active:scale-95",
+    "stop_button": "w-20 h-20 rounded-2xl bg-red-500 text-white shadow-xl shadow-red-500/20 flex items-center justify-center hover:scale-105 transition-transform active:scale-95",
+    "secondary_button": "px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 rounded-xl font-medium transition-colors",
+    "icon_button": "p-2 sm:p-3 rounded-full hover:bg-zinc-100 text-zinc-700 transition-colors"
+  },
+  "screens": {
+    "Home": {
+      "layout": "Vertical list of recorded lectures.",
+      "empty_state": "Center-aligned icon (e.g., Mic), warm prompt 'No lectures recorded yet. Tap the microphone to start.'",
+      "floating_action": "Fixed bottom-center Record button with safe-area padding."
+    },
+    "Record": {
+      "layout": "Minimalist centered layout with high contrast.",
+      "visuals": "Massive monospace timer. Audio visualizer or pulsing concentric rings behind the mic icon.",
+      "controls": "Bottom aligned Pause and Stop buttons."
+    },
+    "Processing": {
+      "layout": "Centered loading screen.",
+      "visuals": "Staggered pulsing text or spinner. Steps indicator: Uploading > Transcribing > Structuring."
+    },
+    "Notes_View": {
+      "layout": "Standard document view. Generous reading width.",
+      "header": "Title, Date, Duration.",
+      "content": "Rich text rendering (H2s for concepts, bullet points for details, bold text for keywords).",
+      "actions": "Bottom fixed bar or Top header icons for Export (PDF/Text) and Share (WhatsApp)."
+    }
+  },
+  "motion": {
+    "page_transition": "animate-in fade-in slide-in-from-bottom-4 duration-300 ease-out",
+    "recording_pulse": "animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite] bg-indigo-400/50 absolute inset-0 rounded-full"
+  },
+  "icons_library": "lucide-react",
+  "image_urls": [],
+  "instructions_to_main_agent": [
+    "Initialize Tailwind correctly and add custom fonts (Manrope, Figtree, JetBrains Mono) via Google Fonts in index.html.",
+    "Build a mobile-first layout. Wrap the main app view in a container with 'max-w-md mx-auto min-h-screen relative bg-zinc-50 border-x border-zinc-200 shadow-2xl' to simulate a mobile app on desktop.",
+    "Use lucide-react for all icons.",
+    "Add data-testid to all actionable elements.",
+    "Use React MediaRecorder API or Web Audio API for recording functionality.",
+    "Mock API endpoints for transcription and note generation with realistic timeouts to show the processing screen.",
+    "Implement Web Share API for WhatsApp sharing if supported, else fallback to a mailto/clipboard approach."
+  ]
+}
