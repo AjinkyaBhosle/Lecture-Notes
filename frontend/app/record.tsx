@@ -166,19 +166,9 @@ export default function RecordScreen() {
     try {
       const finalTitle = lectureTitle.trim() || 'Untitled Lecture';
       const lecture = await api.createLecture(finalTitle);
-      
-      const fileUri = (FileSystem as any).cacheDirectory + `${lecture.id}.m4a`;
-      
-      try {
-        await (FileSystem as any).copyAsync({
-          from: uri,
-          to: fileUri
-        });
-      } catch (copyErr) {
-        console.error('File copy failed, using original URI:', copyErr);
-      }
 
-      router.replace(`/processing/${lecture.id}?language=${selectedLang}&audioUri=${encodeURIComponent(fileUri || uri)}&duration=${duration}`);
+      // Use the original recording URI directly — no copy needed
+      router.replace(`/processing/${lecture.id}?language=${selectedLang}&audioUri=${encodeURIComponent(uri)}&duration=${duration}`);
     } catch (err: any) {
       console.error('Save lecture failed:', err);
       setUploading(false);
