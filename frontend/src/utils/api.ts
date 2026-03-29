@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://lecture-notes-production.up.railway.app';
 const API_BASE = `${BACKEND_URL}/api`;
 
 // ─── Types ────────────────────────────────────────────
