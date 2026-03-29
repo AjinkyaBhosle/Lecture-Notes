@@ -43,17 +43,10 @@
           "backgroundColor": "#4F46E5"
         }
       ],
-      "expo-audio",
-      "expo-asset"
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "4d4fa496-12e5-46a4-91de-1e0a34db2d3b"
-      }
     }
   }
 }
