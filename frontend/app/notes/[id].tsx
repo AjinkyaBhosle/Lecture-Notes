@@ -9,6 +9,7 @@ import {
   Alert,
   TextInput,
   Share,
+  Clipboard,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -185,20 +186,16 @@ export default function NotesScreen() {
   };
 
   const handleExportTranscript = async () => {
-    if (!lecture) return;
+    if (!lecture?.transcript) {
+      Alert.alert('Not Available', 'No transcript available for this lecture.');
+      return;
+    }
     try {
       const text = generateTimestampedTranscript(lecture);
-      const fileName = `${lecture.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_transcript.txt`;
-      const fileUri = FileSystem.cacheDirectory + fileName;
-      
-      await FileSystem.writeAsStringAsync(fileUri, text);
-      
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: 'text/plain',
-          dialogTitle: `Transcript - ${lecture.title}`,
-        });
-      }
+      await Share.share({
+        message: text,
+        title: `Transcript - ${lecture.title}`,
+      });
     } catch (err) {
       console.error('Transcript export failed:', err);
       Alert.alert('Error', 'Failed to export transcript');
@@ -376,7 +373,18 @@ export default function NotesScreen() {
             </TouchableOpacity>
             {showTranscript && (
               <View style={styles.transcriptBox}>
-                <Text style={styles.transcriptText}>{lecture.transcript}</Text>
+                <TouchableOpacity
+                  style={styles.copyBtn}
+                  onPress={() => {
+                    Clipboard.setString(lecture.transcript || '');
+                    Alert.alert('Copied', 'Transcript copied to clipboard');
+                  }}
+                >
+                  <Ionicons name="copy-outline" size={14} color={COLORS.primary} />
+                  <Text style={styles.copyBtnText}>Copy</Text>
+                </TouchableOpacity>
+                <Text selectable style={styles.transcriptText}>{lecture.transcript}</Text>
+              </View>
               </View>
             )}
           </View>
@@ -724,6 +732,22 @@ const styles = StyleSheet.create({
     padding: SPACING.lg,
     marginTop: SPACING.sm,
   },
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: 4,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    borderRadius: BORDER_RADIUS.full,
+    backgroundColor: COLORS.primaryLight,
+    marginBottom: SPACING.sm,
+  },
+  copyBtnText: {
+    fontSize: FONT_SIZES.xs,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
   transcriptText: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.textSecondary,
@@ -736,8 +760,9 @@ const styles = StyleSheet.create({
   bottomBar: {
     flexDirection: 'row',
     paddingHorizontal: SPACING.xl,
-    paddingVertical: SPACING.md,
-    gap: SPACING.md,
+    paddingTop: SPACING.md,
+    paddingBottom: 32,
+    gap: SPACING.sm,
     backgroundColor: COLORS.surface,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
