@@ -5,6 +5,9 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
+  Animated,
+  TextInput,
+  ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,14 +15,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAudioRecorder, RecordingPresets, AudioModule } from 'expo-audio';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../src/utils/theme';
 import { api } from '../src/utils/api';
+import * as FileSystem from 'expo-file-system';
 
 type RecordingState = 'idle' | 'recording' | 'paused' | 'stopped';
 
 const LANGUAGES = [
-  { code: 'en', label: 'English', desc: 'Also handles Hinglish & En+Mar' },
-  { code: 'hi', label: 'Hindi', desc: 'Devanagari output' },
-  { code: 'mr', label: 'Marathi', desc: 'Devanagari output' },
-  { code: 'auto', label: 'Auto-detect', desc: 'Let AI detect language' },
+  { code: 'en', label: 'English', desc: 'Standard English' },
+  { code: 'hi', label: 'Hindi', desc: 'Standard Hindi' },
+  { code: 'mr', label: 'Marathi', desc: 'Marathi' },
+  { code: 'auto', label: 'Auto-detect', desc: 'Auto-detect language' },
 ];
 
 export default function RecordScreen() {
@@ -28,65 +32,81 @@ export default function RecordScreen() {
   const [duration, setDuration] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [selectedLang, setSelectedLang] = useState('en');
+  const [lectureTitle, setLectureTitle] = useState('');
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const permissionGranted = useRef(false);
 
+  // Animation values
+  const pulseAnim1 = useRef(new Animated.Value(1)).current;
+  const pulseAnim2 = useRef(new Animated.Value(1)).current;
+
   useEffect(() => {
     (async () => {
       const status = await AudioModule.requestRecordingPermissionsAsync();
-      if (!status.granted) {
-        Alert.alert('Permission Required', 'Microphone access is needed to record lectures.');
-      } else {
-        permissionGranted.current = true;
-      }
+      permissionGranted.current = status.status === 'granted';
     })();
+
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  const formatTime = (totalSecs: number) => {
-    const h = Math.floor(totalSecs / 3600);
-    const m = Math.floor((totalSecs % 3600) / 60);
-    const s = totalSecs % 60;
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    if (h > 0) return `${pad(h)}:${pad(m)}:${pad(s)}`;
-    return `${pad(m)}:${pad(s)}`;
-  };
+  useEffect(() => {
+    if (state === 'recording') {
+      Animated.loop(
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(pulseAnim1, { toValue: 1.5, duration: 1500, useNativeDriver: true }),
+            Animated.timing(pulseAnim1, { toValue: 1, duration: 0, useNativeDriver: true }),
+          ]),
+          Animated.sequence([
+            Animated.delay(750),
+            Animated.timing(pulseAnim2, { toValue: 1.5, duration: 1500, useNativeDriver: true }),
+            Animated.timing(pulseAnim2, { toValue: 1, duration: 0, useNativeDriver: true }),
+          ]),
+        ])
+      ).start();
+    } else {
+      pulseAnim1.setValue(1);
+      pulseAnim2.setValue(1);
+    }
+  }, [state]);
 
   const startTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       setDuration((prev) => prev + 1);
     }, 1000);
   };
 
   const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    if (timerRef.current) clearInterval(timerRef.current);
   };
 
   const startRecording = async () => {
-    try {
-      if (!permissionGranted.current) {
-        const status = await AudioModule.requestRecordingPermissionsAsync();
-        if (!status.granted) {
-          Alert.alert('Permission Required', 'Microphone access is needed.');
-          return;
-        }
-        permissionGranted.current = true;
-      }
+    if (!permissionGranted.current) {
+      Alert.alert('Permission Denied', 'Please enable microphone access in settings.');
+      return;
+    }
 
-      await audioRecorder.prepareToRecordAsync();
+    try {
+      // Ensure any previous session is cleared
+      if (audioRecorder.isRecording) {
+        await audioRecorder.stop();
+      }
+      
+      const config = {
+        ...RecordingPresets.HIGH_QUALITY,
+      };
+      
+      await audioRecorder.prepareToRecordAsync(config);
       audioRecorder.record();
       setState('recording');
-      setDuration(0);
       startTimer();
-    } catch (err) {
-      console.error('Failed to start recording:', err);
-      Alert.alert('Error', 'Failed to start recording. Please try again.');
+    } catch (err: any) {
+      console.error('Recording start failed:', err);
+      Alert.alert('Recording Error', 'The microphone is currently unavailable. Please try restarting the app or checking your permissions.');
     }
   };
 
@@ -96,7 +116,7 @@ export default function RecordScreen() {
       setState('paused');
       stopTimer();
     } catch (err) {
-      console.error('Failed to pause:', err);
+      Alert.alert('Error', 'Failed to pause recording');
     }
   };
 
@@ -106,58 +126,70 @@ export default function RecordScreen() {
       setState('recording');
       startTimer();
     } catch (err) {
-      console.error('Failed to resume:', err);
+      Alert.alert('Error', 'Failed to resume recording');
     }
   };
 
   const stopRecording = async () => {
     try {
-      stopTimer();
       await audioRecorder.stop();
       setState('stopped');
+      stopTimer();
     } catch (err) {
-      console.error('Failed to stop:', err);
+      Alert.alert('Error', 'Failed to stop recording');
     }
+  };
+
+  const discardRecording = () => {
+    Alert.alert('Discard Recording', 'Are you sure you want to delete this recording?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Discard',
+        style: 'destructive',
+        onPress: () => {
+          setDuration(0);
+          setState('idle');
+        },
+      },
+    ]);
   };
 
   const saveAndProcess = async () => {
     const uri = audioRecorder.uri;
     if (!uri) {
-      Alert.alert('Error', 'No recording found');
+      Alert.alert('Error', 'No recording found. Please try recording again.');
+      setUploading(false);
       return;
     }
 
     setUploading(true);
     try {
-      // Create lecture locally
-      const lecture = await api.createLecture('Untitled Lecture');
+      const finalTitle = lectureTitle.trim() || 'Untitled Lecture';
+      const lecture = await api.createLecture(finalTitle);
+      
+      const fileUri = (FileSystem as any).cacheDirectory + `${lecture.id}.m4a`;
+      
+      try {
+        await (FileSystem as any).copyAsync({
+          from: uri,
+          to: fileUri
+        });
+      } catch (copyErr) {
+        console.error('File copy failed, using original URI:', copyErr);
+      }
 
-      // Navigate to processing with audio URI and language
-      router.replace(`/processing/${lecture.id}?language=${selectedLang}&audioUri=${encodeURIComponent(uri)}&duration=${duration}`);
+      router.replace(`/processing/${lecture.id}?language=${selectedLang}&audioUri=${encodeURIComponent(fileUri || uri)}&duration=${duration}`);
     } catch (err: any) {
-      console.error('Save failed:', err);
-      Alert.alert('Error', err?.message || 'Could not save the recording.');
+      console.error('Save lecture failed:', err);
       setUploading(false);
+      Alert.alert('Error', 'Failed to save lecture info. Please try again.');
     }
   };
 
-  const discardRecording = () => {
-    Alert.alert(
-      'Discard Recording',
-      'Are you sure you want to discard this recording?',
-      [
-        { text: 'Keep', style: 'cancel' },
-        {
-          text: 'Discard',
-          style: 'destructive',
-          onPress: () => {
-            setState('idle');
-            setDuration(0);
-            router.back();
-          },
-        },
-      ]
-    );
+  const formatTime = (seconds: number) => {
+    const min = Math.floor(seconds / 60);
+    const sec = seconds % 60;
+    return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
   const isRecording = state === 'recording';
@@ -167,179 +199,206 @@ export default function RecordScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          testID="record-back-button"
-          onPress={() => {
-            if (isRecording || isPaused) {
-              discardRecording();
-            } else {
-              router.back();
-            }
-          }}
-          style={styles.backBtn}
-        >
-          <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {isIdle ? 'New Recording' : isStopped ? 'Recording Complete' : 'Recording'}
-        </Text>
-        <View style={{ width: 44 }} />
-      </View>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            testID="record-back-button"
+            onPress={() => {
+              if (isRecording || isPaused) {
+                discardRecording();
+              } else {
+                router.back();
+              }
+            }}
+            style={styles.backBtn}
+          >
+            <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>
+            {isIdle ? 'New Recording' : isStopped ? 'Recording Complete' : 'Recording'}
+          </Text>
+          <View style={{ width: 44 }} />
+        </View>
 
-      {/* Timer Display */}
-      <View style={styles.timerSection}>
-        {isRecording && (
-          <View style={styles.pulseOuter}>
-            <View style={styles.pulseInner} />
-          </View>
-        )}
-        <View style={styles.timerCircle}>
-          <Ionicons
-            name={isRecording ? 'mic' : isPaused ? 'pause' : 'mic-outline'}
-            size={32}
-            color={isRecording ? COLORS.danger : COLORS.primary}
+        {/* Title Input */}
+        <View style={styles.titleSection}>
+          <TextInput
+            style={styles.titleInput}
+            placeholder="Enter lecture title..."
+            placeholderTextColor={COLORS.textMuted}
+            value={lectureTitle}
+            onChangeText={setLectureTitle}
+            editable={!uploading}
           />
         </View>
-        <Text style={styles.timerText}>{formatTime(duration)}</Text>
-        <Text style={styles.timerLabel}>
-          {isIdle
-            ? 'Ready to record'
-            : isRecording
-            ? 'Recording in progress...'
-            : isPaused
-            ? 'Recording paused'
-            : 'Recording saved'}
-        </Text>
-      </View>
 
-      {/* Controls */}
-      <View style={styles.controlsSection}>
-        {isIdle && (
-          <TouchableOpacity
-            testID="start-recording-button"
-            style={styles.recordButton}
-            onPress={startRecording}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="mic" size={32} color={COLORS.textWhite} />
-            <Text style={styles.recordBtnText}>Start Recording</Text>
-          </TouchableOpacity>
-        )}
-
-        {isRecording && (
-          <View style={styles.controlRow}>
-            <TouchableOpacity
-              testID="pause-recording-button"
-              style={styles.controlBtn}
-              onPress={pauseRecording}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="pause" size={28} color={COLORS.primary} />
-              <Text style={styles.controlLabel}>Pause</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              testID="stop-recording-button"
-              style={styles.stopButton}
-              onPress={stopRecording}
-              activeOpacity={0.8}
-            >
-              <View style={styles.stopIcon} />
-            </TouchableOpacity>
-            <View style={{ width: 70, alignItems: 'center' }}>
-              <Text style={styles.controlLabel}> </Text>
-            </View>
-          </View>
-        )}
-
-        {isPaused && (
-          <View style={styles.controlRow}>
-            <TouchableOpacity
-              testID="resume-recording-button"
-              style={styles.controlBtn}
-              onPress={resumeRecording}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="play" size={28} color={COLORS.success} />
-              <Text style={styles.controlLabel}>Resume</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              testID="stop-recording-button-paused"
-              style={styles.stopButton}
-              onPress={stopRecording}
-              activeOpacity={0.8}
-            >
-              <View style={styles.stopIcon} />
-            </TouchableOpacity>
-            <View style={{ width: 70, alignItems: 'center' }}>
-              <Text style={styles.controlLabel}> </Text>
-            </View>
-          </View>
-        )}
-
-        {isStopped && (
-          <View style={styles.stoppedControls}>
-            <TouchableOpacity
-              testID="save-and-process-button"
-              style={styles.processButton}
-              onPress={saveAndProcess}
-              activeOpacity={0.8}
-              disabled={uploading}
-            >
-              {uploading ? (
-                <Text style={styles.processBtnText}>Uploading...</Text>
-              ) : (
-                <>
-                  <Ionicons name="sparkles" size={20} color={COLORS.textWhite} />
-                  <Text style={styles.processBtnText}>Generate Notes</Text>
-                </>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              testID="discard-recording-button"
-              style={styles.discardButton}
-              onPress={discardRecording}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.discardBtnText}>Discard</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-
-      {/* Language Selector + Tips */}
-      {isIdle && (
-        <View style={styles.tipsSection}>
-          <Text style={styles.tipsTitle}>Lecture Language</Text>
-          <View style={styles.langGrid}>
-            {LANGUAGES.map((lang) => (
-              <TouchableOpacity
-                key={lang.code}
-                testID={`lang-${lang.code}`}
+        {/* Timer Display */}
+        <View style={styles.timerSection}>
+          {isRecording && (
+            <>
+              <Animated.View
                 style={[
-                  styles.langChip,
-                  selectedLang === lang.code && styles.langChipActive,
+                  styles.pulseOuter,
+                  { transform: [{ scale: pulseAnim1 }], opacity: pulseAnim1.interpolate({ inputRange: [1, 1.5], outputRange: [0.4, 0] }) },
                 ]}
-                onPress={() => setSelectedLang(lang.code)}
+              />
+              <Animated.View
+                style={[
+                  styles.pulseOuter,
+                  { transform: [{ scale: pulseAnim2 }], opacity: pulseAnim2.interpolate({ inputRange: [1, 1.5], outputRange: [0.25, 0] }) },
+                ]}
+              />
+            </>
+          )}
+          <View style={styles.timerCircle}>
+            <Ionicons
+              name={isRecording ? 'mic' : isPaused ? 'pause' : 'mic-outline'}
+              size={32}
+              color={isRecording ? COLORS.danger : COLORS.primary}
+            />
+          </View>
+          <Text style={styles.timerText}>{formatTime(duration)}</Text>
+          <Text style={styles.timerLabel}>
+            {isIdle
+              ? 'Ready to record'
+              : isRecording
+              ? 'Recording in progress...'
+              : isPaused
+              ? 'Recording paused'
+              : 'Recording saved'}
+          </Text>
+        </View>
+
+        {/* Controls */}
+        <View style={styles.controlsSection}>
+          {isIdle && (
+            <TouchableOpacity
+              testID="start-recording-button"
+              style={styles.recordButton}
+              onPress={startRecording}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="mic" size={32} color={COLORS.textWhite} />
+              <Text style={styles.recordBtnText}>Start Recording</Text>
+            </TouchableOpacity>
+          )}
+
+          {isRecording && (
+            <View style={styles.controlRow}>
+              <TouchableOpacity
+                testID="pause-recording-button"
+                style={styles.controlBtn}
+                onPress={pauseRecording}
                 activeOpacity={0.7}
               >
-                <Text
-                  style={[
-                    styles.langChipText,
-                    selectedLang === lang.code && styles.langChipTextActive,
-                  ]}
-                >
-                  {lang.label}
-                </Text>
+                <Ionicons name="pause" size={28} color={COLORS.primary} />
+                <Text style={styles.controlLabel}>Pause</Text>
               </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.langDesc}>
-            {LANGUAGES.find((l) => l.code === selectedLang)?.desc}
-          </Text>
+              <TouchableOpacity
+                testID="stop-recording-button"
+                style={styles.stopButton}
+                onPress={stopRecording}
+                activeOpacity={0.8}
+              >
+                <View style={styles.stopIcon} />
+              </TouchableOpacity>
+              <View style={{ width: 70, alignItems: 'center' }}>
+                <Text style={styles.controlLabel}> </Text>
+              </View>
+            </View>
+          )}
 
-          <View style={styles.tipsDivider} />
+          {isPaused && (
+            <View style={styles.controlRow}>
+              <TouchableOpacity
+                testID="resume-recording-button"
+                style={styles.controlBtn}
+                onPress={resumeRecording}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="play" size={28} color={COLORS.success} />
+                <Text style={styles.controlLabel}>Resume</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="stop-recording-button-paused"
+                style={styles.stopButton}
+                onPress={stopRecording}
+                activeOpacity={0.8}
+              >
+                <View style={styles.stopIcon} />
+              </TouchableOpacity>
+              <View style={{ width: 70, alignItems: 'center' }}>
+                <Text style={styles.controlLabel}> </Text>
+              </View>
+            </View>
+          )}
+
+          {isStopped && (
+            <View style={styles.stoppedControls}>
+              <TouchableOpacity
+                testID="save-and-process-button"
+                style={styles.processButton}
+                onPress={saveAndProcess}
+                activeOpacity={0.8}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <Text style={styles.processBtnText}>Uploading...</Text>
+                ) : (
+                  <>
+                    <Ionicons name="sparkles" size={20} color={COLORS.textWhite} />
+                    <Text style={styles.processBtnText}>Generate Notes</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="discard-recording-button"
+                style={styles.discardButton}
+                onPress={discardRecording}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.discardBtnText}>Discard</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        {/* Language Selector + Tips */}
+        <View style={styles.tipsSection}>
+          {isIdle && (
+            <>
+              <Text style={styles.tipsTitle}>Lecture Language</Text>
+              <View style={styles.langGrid}>
+                {LANGUAGES.map((lang) => (
+                  <TouchableOpacity
+                    key={lang.code}
+                    testID={`lang-${lang.code}`}
+                    style={[
+                      styles.langChip,
+                      selectedLang === lang.code && styles.langChipActive,
+                    ]}
+                    onPress={() => setSelectedLang(lang.code)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.langChipText,
+                        selectedLang === lang.code && styles.langChipTextActive,
+                      ]}
+                    >
+                      {lang.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.tipsDivider} />
+            </>
+          )}
+          
           <Text style={styles.tipsTitle}>Tips for best results</Text>
           <View style={styles.tipItem}>
             <Ionicons name="volume-medium-outline" size={16} color={COLORS.textMuted} />
@@ -351,10 +410,10 @@ export default function RecordScreen() {
           </View>
           <View style={styles.tipItem}>
             <Ionicons name="language-outline" size={16} color={COLORS.textMuted} />
-            <Text style={styles.tipText}>Supports English, Hindi, Marathi & Hinglish</Text>
+            <Text style={styles.tipText}>English, Hindi, Marathi & Auto-detect (Multilingual, quality may vary)</Text>
           </View>
         </View>
-      )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -364,12 +423,32 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: SPACING.xxxl,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.md,
+  },
+  titleSection: {
+    paddingHorizontal: SPACING.xxxl,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.lg,
+    backgroundColor: COLORS.background,
+    zIndex: 10,
+  },
+  titleInput: {
+    fontSize: FONT_SIZES.lg,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+    paddingVertical: SPACING.sm,
+    textAlign: 'center',
   },
   backBtn: {
     width: 44,
@@ -387,10 +466,9 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   timerSection: {
-    flex: 1,
+    paddingTop: 60,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingBottom: 40,
   },
   pulseOuter: {
     position: 'absolute',
@@ -438,6 +516,7 @@ const styles = StyleSheet.create({
   controlsSection: {
     paddingHorizontal: SPACING.xxxl,
     paddingBottom: SPACING.xxxl,
+    marginTop: SPACING.lg,
   },
   recordButton: {
     flexDirection: 'row',
@@ -559,11 +638,6 @@ const styles = StyleSheet.create({
   langChipTextActive: {
     color: COLORS.primary,
     fontWeight: '600',
-  },
-  langDesc: {
-    fontSize: FONT_SIZES.xs,
-    color: COLORS.textMuted,
-    fontStyle: 'italic',
   },
   tipsDivider: {
     height: 1,

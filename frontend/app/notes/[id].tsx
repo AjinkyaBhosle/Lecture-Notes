@@ -7,15 +7,15 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  Share,
-  Platform,
   TextInput,
+  Share,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
 import { COLORS, SPACING, FONT_SIZES, BORDER_RADIUS } from '../../src/utils/theme';
 import { api, Lecture, StructuredNotes } from '../../src/utils/api';
 
@@ -101,6 +101,21 @@ function generateNotesHtml(notes: StructuredNotes): string {
   return html;
 }
 
+function generateTimestampedTranscript(lecture: Lecture): string {
+  if (!lecture.segments || lecture.segments.length === 0) {
+    return lecture.transcript || 'No transcript available';
+  }
+
+  return lecture.segments
+    .map((s) => {
+      const min = Math.floor(s.start / 60);
+      const sec = Math.floor(s.start % 60);
+      const time = `[${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}]`;
+      return `${time} ${s.text}`;
+    })
+    .join('\n');
+}
+
 export default function NotesScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -166,6 +181,44 @@ export default function NotesScreen() {
     } catch (err) {
       console.error('PDF export failed:', err);
       Alert.alert('Error', 'Failed to export PDF');
+    }
+  };
+
+  const handleExportTranscript = async () => {
+    if (!lecture) return;
+    try {
+      const text = generateTimestampedTranscript(lecture);
+      const fileName = `${lecture.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_transcript.txt`;
+      const fileUri = FileSystem.cacheDirectory + fileName;
+      
+      await FileSystem.writeAsStringAsync(fileUri, text);
+      
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'text/plain',
+          dialogTitle: `Transcript - ${lecture.title}`,
+        });
+      }
+    } catch (err) {
+      console.error('Transcript export failed:', err);
+      Alert.alert('Error', 'Failed to export transcript');
+    }
+  };
+
+  const handleExportAudio = async () => {
+    if (!lecture?.audio_uri) {
+      Alert.alert('Not Found', 'Original audio file is no longer on this device.');
+      return;
+    }
+    try {
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(lecture.audio_uri, {
+          dialogTitle: `Audio - ${lecture.title}`,
+        });
+      }
+    } catch (err) {
+      console.error('Audio export failed:', err);
+      Alert.alert('Error', 'Failed to share audio file');
     }
   };
 
@@ -328,19 +381,44 @@ export default function NotesScreen() {
             )}
           </View>
         )}
+
+        {/* Downloads & Extras */}
+        <View style={styles.extrasSection}>
+          <Text style={styles.extrasTitle}>Downloads & Extras</Text>
+          <View style={styles.extrasGrid}>
+            <TouchableOpacity style={styles.extraCard} onPress={handleExportTranscript}>
+              <View style={[styles.extraIconWrap, { backgroundColor: '#F0F9FF' }]}>
+                <Ionicons name="chatbox-ellipses-outline" size={24} color="#0EA5E9" />
+              </View>
+              <Text style={styles.extraLabel}>Raw Transcript</Text>
+              <Text style={styles.extraSublabel}>With Timestamps</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.extraCard} onPress={handleExportAudio}>
+              <View style={[styles.extraIconWrap, { backgroundColor: '#F0FDF4' }]}>
+                <Ionicons name="mic-outline" size={24} color="#22C55E" />
+              </View>
+              <Text style={styles.extraLabel}>Original Audio</Text>
+              <Text style={styles.extraSublabel}>M4A Format</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </ScrollView>
 
       {/* Bottom Action Bar */}
       <View style={styles.bottomBar}>
-        <TouchableOpacity
-          testID="bottom-player-button"
-          style={styles.bottomBtn}
-          onPress={() => router.push(`/player/${id}`)}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="headset-outline" size={18} color={COLORS.primary} />
-          <Text style={styles.bottomBtnText}>Listen</Text>
-        </TouchableOpacity>
+        {/* Only show Listen button if local audio file still exists */}
+        {!!lecture.audio_uri && (
+          <TouchableOpacity
+            testID="bottom-player-button"
+            style={styles.bottomBtn}
+            onPress={() => router.push(`/player/${id}`)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="headset-outline" size={18} color={COLORS.primary} />
+            <Text style={styles.bottomBtnText}>Listen</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           testID="bottom-flashcards-button"
           style={styles.bottomBtn}
@@ -443,6 +521,55 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: SPACING.lg,
     marginBottom: SPACING.xl,
+  },
+  tipItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  extrasSection: {
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.xl,
+    paddingBottom: SPACING.xxxl,
+  },
+  extrasTitle: {
+    fontSize: FONT_SIZES.md,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: SPACING.md,
+  },
+  extrasGrid: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+  },
+  extraCard: {
+    flex: 1,
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+  },
+  extraIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: SPACING.sm,
+  },
+  extraLabel: {
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+  },
+  extraSublabel: {
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    textAlign: 'center',
   },
   metaItem: {
     flexDirection: 'row',

@@ -3,6 +3,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://lecture-notes-production.up.railway.app';
 const API_BASE = `${BACKEND_URL}/api`;
 
+const NGROK_HEADERS = {
+  'ngrok-skip-browser-warning': 'true',
+  'Accept': 'application/json',
+};
+
 // ─── Types ────────────────────────────────────────────
 export interface Lecture {
   id: string;
@@ -41,6 +46,7 @@ export interface Folder {
   id: string;
   name: string;
   color: string;
+  parent_id?: string | null;
   created_at: string;
 }
 
@@ -49,7 +55,16 @@ const LECTURES_KEY = '@lectures';
 const FOLDERS_KEY = '@folders';
 
 function genId(): string {
-  return 'xxxx-xxxx-xxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16));
+  // Use native crypto.randomUUID if available (React Native 0.70+ / modern environments)
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // RFC 4122 v4 UUID fallback
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 const storage = {
@@ -108,13 +123,17 @@ export const api = {
     return lecture;
   },
 
-  async updateLecture(id: string, data: { title?: string; folder_id?: string | null }): Promise<Lecture> {
+  async updateLecture(id: string, updates: Partial<Lecture>): Promise<Lecture> {
     const lectures = await storage.getLectures();
     const idx = lectures.findIndex((l) => l.id === id);
     if (idx === -1) throw new Error('Lecture not found');
-    if (data.title !== undefined) lectures[idx].title = data.title;
-    if (data.folder_id !== undefined) lectures[idx].folder_id = data.folder_id;
-    lectures[idx].updated_at = new Date().toISOString();
+    
+    lectures[idx] = { 
+      ...lectures[idx], 
+      ...updates, 
+      updated_at: new Date().toISOString() 
+    };
+    
     await storage.saveLectures(lectures);
     return lectures[idx];
   },
@@ -125,11 +144,7 @@ export const api = {
   },
 
   async _updateLectureField(id: string, updates: Partial<Lecture>): Promise<void> {
-    const lectures = await storage.getLectures();
-    const idx = lectures.findIndex((l) => l.id === id);
-    if (idx === -1) return;
-    lectures[idx] = { ...lectures[idx], ...updates, updated_at: new Date().toISOString() };
-    await storage.saveLectures(lectures);
+    await api.updateLecture(id, updates);
   },
 
   // ── AI Processing (Backend Proxy) ──
@@ -140,24 +155,41 @@ export const api = {
     const formData = new FormData();
     formData.append('file', { uri: fileUri, type: 'audio/m4a', name: `${lectureId}.m4a` } as any);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 sec timeout
+
     const url = `${API_BASE}/transcribe?language=${language}`;
-    // Do NOT set Content-Type header — React Native sets it automatically with correct boundary
-    const res = await fetch(url, {
-      method: 'POST',
-      body: formData,
-    });
-    if (!res.ok) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+        headers: {
+          ...NGROK_HEADERS,
+        },
+      });
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) {
+        await api._updateLectureField(lectureId, { status: 'error' });
+        const err = await res.text();
+        throw new Error(err || 'Transcription failed');
+      }
+      const data = await res.json();
+      await api._updateLectureField(lectureId, {
+        transcript: data.transcript,
+        segments: data.segments || [],
+        status: 'generating_notes',
+      });
+      return data.transcript;
+    } catch (e: any) {
+      clearTimeout(timeoutId);
       await api._updateLectureField(lectureId, { status: 'error' });
-      const err = await res.text();
-      throw new Error(err || 'Transcription failed');
+      if (e.name === 'AbortError') {
+        throw new Error('Upload timed out. Check your internet connection.');
+      }
+      throw e;
     }
-    const data = await res.json();
-    await api._updateLectureField(lectureId, {
-      transcript: data.transcript,
-      segments: data.segments || [],
-      status: 'generating_notes',
-    });
-    return data.transcript;
   },
 
   async generateNotes(lectureId: string, transcript: string): Promise<StructuredNotes> {
@@ -165,7 +197,10 @@ export const api = {
 
     const res = await fetch(`${API_BASE}/generate-notes`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        ...NGROK_HEADERS
+      },
       body: JSON.stringify({ transcript }),
     });
     if (!res.ok) {
@@ -175,11 +210,18 @@ export const api = {
     }
     const data = await res.json();
     const notes = data.notes as StructuredNotes;
-    await api._updateLectureField(lectureId, {
+    
+    // Only update title if user hasn't already renamed it
+    const current = await api.getLecture(lectureId);
+    const updates: Partial<Lecture> = {
       structured_notes: notes,
       status: 'completed',
-      title: notes.title || 'Untitled Lecture',
-    });
+    };
+    if (current.title === 'Untitled Lecture') {
+      updates.title = notes.title || 'Untitled Lecture';
+    }
+
+    await api.updateLecture(lectureId, updates);
     return notes;
   },
 
@@ -201,7 +243,10 @@ export const api = {
 
     const res = await fetch(`${API_BASE}/generate-flashcards`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        ...NGROK_HEADERS
+      },
       body: JSON.stringify({ notes: lecture.structured_notes }),
     });
     if (!res.ok) {
@@ -218,12 +263,26 @@ export const api = {
     return storage.getFolders();
   },
 
-  async createFolder(name: string, color: string = '#4F46E5'): Promise<Folder> {
-    const folder: Folder = { id: genId(), name, color, created_at: new Date().toISOString() };
+  async createFolder(name: string, color: string = '#4F46E5', parent_id: string | null = null): Promise<Folder> {
+    const folder: Folder = { 
+      id: genId(), 
+      name, 
+      color, 
+      parent_id,
+      created_at: new Date().toISOString() 
+    };
     const folders = await storage.getFolders();
     folders.unshift(folder);
     await storage.saveFolders(folders);
     return folder;
+  },
+
+  async updateFolder(id: string, updates: Partial<Folder>): Promise<void> {
+    const folders = await storage.getFolders();
+    const idx = folders.findIndex((f) => f.id === id);
+    if (idx === -1) return;
+    folders[idx] = { ...folders[idx], ...updates };
+    await storage.saveFolders(folders);
   },
 
   async deleteFolder(id: string): Promise<void> {

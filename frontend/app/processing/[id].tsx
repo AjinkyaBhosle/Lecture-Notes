@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -76,6 +77,18 @@ export default function ProcessingScreen() {
 
       // Done!
       setCurrentStep('done');
+
+      // 🧹 SELF-CLEANING: Delete the temporary audio cache file to save phone space
+      if (audioUri) {
+        try {
+          // Use require to avoid top-level import issues if FileSystem isn't fully initialized
+          const FileSystem = require('expo-file-system');
+          await FileSystem.deleteAsync(audioUri, { idempotent: true });
+          console.log('Cleaned up temporary audio cache');
+        } catch (cleanupErr) {
+          console.warn('Silent cleanup fail (safe to ignore):', cleanupErr);
+        }
+      }
     } catch (err: any) {
       setCurrentStep('error');
       setErrorMsg(err?.message || 'Processing failed');
@@ -84,7 +97,14 @@ export default function ProcessingScreen() {
 
   const retryProcessing = () => {
     if (!audioUri) {
-      setErrorMsg('Audio no longer available. Please record again.');
+      Alert.alert(
+        'Audio Unavailable',
+        'The audio file is no longer available (it was deleted after processing to protect your privacy). Please record a new lecture.',
+        [
+          { text: 'Go Home', onPress: () => router.replace('/') },
+          { text: 'Record New', onPress: () => router.replace('/record') },
+        ]
+      );
       return;
     }
     processStarted.current = false;

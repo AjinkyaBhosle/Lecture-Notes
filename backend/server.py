@@ -7,10 +7,11 @@ import tempfile
 import math
 import json
 import uuid
-import subprocess
 from pathlib import Path
 from pydantic import BaseModel
 from pydub import AudioSegment
+
+import subprocess
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -25,10 +26,12 @@ def check_ffmpeg():
 
 HAS_FFMPEG = check_ffmpeg()
 if not HAS_FFMPEG:
-    print("\n" + "!" * 50)
+    print("\n" + "!"*50)
     print("WARNING: FFmpeg NOT FOUND!")
     print("Long recordings (>25MB) will FAIL to process.")
-    print("!" * 50 + "\n")
+    print("Please install FFmpeg on this system to enable slicing.")
+    print("!"*50 + "\n")
+# ────────────────────────────
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -45,6 +48,7 @@ def _parse_segment(seg, offset: float = 0.0) -> dict:
             "end": seg.get("end", 0.0) + offset,
             "text": seg.get("text", "").strip(),
         }
+    # Pydantic model / dataclass style
     return {
         "start": getattr(seg, "start", 0.0) + offset,
         "end": getattr(seg, "end", 0.0) + offset,
@@ -66,10 +70,11 @@ def _get_segments(response) -> list:
     return []
 
 # ─── OpenAI Integration ──────────────────────────────
+import openai
 from openai import AsyncOpenAI
 
 def get_api_key():
-    # Prioritize OPENAI_API_KEY, fallback to EMERGENT_LLM_KEY
+    # Prioritize OPENAI_API_KEY, fallback to EMERGENT_LLM_KEY for compatibility
     key = os.environ.get("OPENAI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY")
     if not key:
         raise ValueError("OPENAI_API_KEY not set")
@@ -95,8 +100,10 @@ async def transcribe_audio(file_path: str, language: str = "en") -> dict:
             }
             if language != "auto":
                 kwargs["language"] = language
+            
+            # Response is a Transcription object
             response = await client.audio.transcriptions.create(**kwargs)
-
+            
         segments = [_parse_segment(s) for s in _get_segments(response)]
         return {"text": _get_text(response), "segments": segments}
     else:
@@ -136,10 +143,17 @@ async def generate_notes_from_transcript(transcript: str) -> dict:
     """Generate structured notes from transcript using GPT"""
     client = get_client()
     system_prompt = """You are an expert academic note-taker. Convert lecture transcripts into well-structured notes.
+
+CRITICAL RULES:
+- Stay 100% faithful to the transcript. Do NOT add, assume, or predict information not present in the source.
+- Only restructure and organize what was actually said. Do NOT hallucinate or invent content.
+- Remove filler words (um, uh, like) and noise, but preserve all factual content exactly as spoken.
+- If the transcript is short or unclear, keep notes brief rather than padding with assumptions.
+
 Output MUST be valid JSON with this exact structure:
 {
-  "title": "Lecture topic title",
-  "summary": "2-3 sentence overview of the lecture",
+  "title": "Lecture topic title (derived from actual content)",
+  "summary": "2-3 sentence overview of what was actually discussed",
   "sections": [
     {
       "heading": "Section heading",
@@ -149,7 +163,6 @@ Output MUST be valid JSON with this exact structure:
   ],
   "key_takeaways": ["Takeaway 1", "Takeaway 2"]
 }
-Remove all filler words, noise, and irrelevant conversation. Focus on academic content only.
 Output ONLY the JSON, no markdown formatting or code blocks."""
 
     max_chars = 12000
@@ -165,6 +178,7 @@ Output ONLY the JSON, no markdown formatting or code blocks."""
                 ]
             )
             all_notes.append(resp.choices[0].message.content)
+            
         combine_resp = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -209,12 +223,15 @@ async def generate_flashcards_from_notes(notes: dict) -> list:
     resp = await client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Generate flashcards from lecture notes for exam preparation. Output MUST be valid JSON object with a 'flashcards' key containing an array: {\"flashcards\": [{\"front\": \"Question\", \"back\": \"Answer\"}, ...]}. Create 8-15 flashcards. Output ONLY JSON."},
+            {"role": "system", "content": "Generate flashcards from lecture notes for exam preparation. Output MUST be valid JSON array: [{\"front\": \"Question or concept\", \"back\": \"Answer or explanation\"}, ...]. Create 8-15 flashcards. Output ONLY JSON."},
             {"role": "user", "content": f"Generate flashcards from these notes:\n\n{json.dumps(notes, indent=2)}"}
         ],
         response_format={"type": "json_object"}
     )
+    # Wrap in key if necessary or handle direct array if using gpt-4o's json_object (which usually requires a key in schema)
+    # Actually, official docs say json_object works best if you tell it to return an object.
     response = resp.choices[0].message.content
+
     try:
         clean = response.strip()
         if clean.startswith("```"):
@@ -224,21 +241,34 @@ async def generate_flashcards_from_notes(notes: dict) -> list:
             clean = clean.strip()
             if clean.startswith("json"):
                 clean = clean[4:].strip()
-        result = json.loads(clean)
-        # Handle both array and object wrapper
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            return result.get("flashcards", result.get("cards", []))
-        return [result]
+        return json.loads(clean)
     except json.JSONDecodeError:
         return [{"front": "Review your notes", "back": response[:500]}]
+
+# ─── Direct OpenAI (Commented Out — For Future Scaling) ────
+# import openai
+# async def transcribe_audio_openai(file_path, language="en"):
+#     client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+#     with open(file_path, "rb") as f:
+#         resp = await client.audio.transcriptions.create(model="whisper-1", file=f, language=language)
+#     return resp.text
+#
+# async def generate_notes_openai(transcript):
+#     client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+#     resp = await client.chat.completions.create(
+#         model="gpt-4o",
+#         messages=[{"role":"system","content":"Convert to structured JSON notes..."},
+#                   {"role":"user","content":transcript}],
+#         response_format={"type":"json_object"}
+#     )
+#     return json.loads(resp.choices[0].message.content)
+# ─── End Direct OpenAI ─────────────────────────────────
 
 # ─── API Routes (Thin Proxy — No Storage) ──────────────
 
 @api_router.get("/")
 async def root():
-    return {"message": "AI Lecture Companion API — Thin Proxy", "ffmpeg": HAS_FFMPEG}
+    return {"message": "AI Lecture Companion API — Thin Proxy"}
 
 class TranscriptRequest(BaseModel):
     transcript: str
@@ -249,8 +279,7 @@ class NotesRequest(BaseModel):
 @api_router.post("/transcribe")
 async def api_transcribe(file: UploadFile = File(...), language: str = Query(default="en")):
     """Upload audio → get transcript back. Audio is deleted after processing."""
-    ext = file.filename.split('.')[-1] if file.filename and '.' in file.filename else 'm4a'
-    with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=f".{file.filename.split('.')[-1] if file.filename and '.' in file.filename else 'm4a'}", delete=False) as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
@@ -266,6 +295,7 @@ async def api_transcribe(file: UploadFile = File(...), language: str = Query(def
         logger.error(f"Transcription failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
+        # Always delete audio file — no storage on server
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
             logger.info("Audio file deleted after processing")
@@ -297,7 +327,8 @@ async def api_generate_flashcards(data: NotesRequest):
 # Include router
 app.include_router(api_router)
 
-# CORS — allow all in dev; set ALLOWED_ORIGINS env var for production
+# CORS — allow all origins in development; restrict in production by setting
+# ALLOWED_ORIGINS env var to a comma-separated list of origins.
 _raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",")] if _raw_origins != "*" else ["*"]
 

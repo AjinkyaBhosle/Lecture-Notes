@@ -10,6 +10,7 @@ import {
   Alert,
   TextInput,
   ScrollView,
+  Platform,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,7 +57,7 @@ function getStatusInfo(status: string) {
   }
 }
 
-function LectureCard({ lecture, onPress, onDelete }: { lecture: Lecture; onPress: () => void; onDelete: () => void }) {
+function LectureCard({ lecture, onPress, onDelete, onLongPress }: { lecture: Lecture; onPress: () => void; onDelete: () => void; onLongPress: () => void }) {
   const statusInfo = getStatusInfo(lecture.status);
 
   return (
@@ -64,6 +65,7 @@ function LectureCard({ lecture, onPress, onDelete }: { lecture: Lecture; onPress
       testID={`lecture-card-${lecture.id}`}
       style={styles.card}
       onPress={onPress}
+      onLongPress={onLongPress}
       activeOpacity={0.7}
     >
       <View style={styles.cardHeader}>
@@ -107,7 +109,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -132,14 +134,15 @@ export default function HomeScreen() {
     }, [fetchData])
   );
 
-  const filteredLectures = selectedFolder
-    ? lectures.filter((l) => l.folder_id === selectedFolder)
-    : lectures;
+  const currentFolder = currentFolderId ? folders.find(f => f.id === currentFolderId) : null;
+
+  const filteredFolders = folders.filter(f => f.parent_id === currentFolderId);
+  const filteredLectures = lectures.filter(l => l.folder_id === currentFolderId);
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     try {
-      await api.createFolder(newFolderName.trim());
+      await api.createFolder(newFolderName.trim(), '#4F46E5', currentFolderId);
       setNewFolderName('');
       setShowNewFolder(false);
       fetchData();
@@ -148,14 +151,68 @@ export default function HomeScreen() {
     }
   };
 
-  const handleDeleteFolder = (folder: Folder) => {
-    Alert.alert('Delete Folder', `Delete "${folder.name}"? Lectures inside won't be deleted.`, [
+  const handleRenameFolder = (folder: Folder) => {
+    if (Platform.OS === 'web') {
+      const newName = window.prompt('Rename Folder', folder.name);
+      if (newName?.trim()) {
+        api.updateFolder(folder.id, { name: newName.trim() }).then(fetchData);
+      }
+      return;
+    }
+    Alert.prompt('Rename Folder', 'Enter new folder name', [
       { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Rename', 
+        onPress: async (newName?: string) => {
+          if (newName?.trim()) {
+            await api.updateFolder(folder.id, { name: newName.trim() });
+            fetchData();
+          }
+        } 
+      }
+    ], 'plain-text', folder.name);
+  };
+
+  const handleRenameLecture = (lecture: Lecture) => {
+    if (Platform.OS === 'web') {
+      const newTitle = window.prompt('Rename Lecture', lecture.title);
+      if (newTitle?.trim()) {
+        api.updateLecture(lecture.id, { title: newTitle.trim() }).then(fetchData);
+      }
+      return;
+    }
+    Alert.prompt('Rename Lecture', 'Enter new lecture title', [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Rename', 
+        onPress: async (newTitle?: string) => {
+          if (newTitle?.trim()) {
+            await api.updateLecture(lecture.id, { title: newTitle.trim() });
+            fetchData();
+          }
+        } 
+      }
+    ], 'plain-text', lecture.title);
+  };
+
+  const handleDeleteFolder = (folder: Folder) => {
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete "${folder.name}"?`)) {
+        api.deleteFolder(folder.id).then(() => {
+          if (currentFolderId === folder.id) setCurrentFolderId(null);
+          fetchData();
+        });
+      }
+      return;
+    }
+    Alert.alert('Folder Options', `What with "${folder.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Rename', onPress: () => handleRenameFolder(folder) },
       {
         text: 'Delete', style: 'destructive',
         onPress: async () => {
           await api.deleteFolder(folder.id);
-          if (selectedFolder === folder.id) setSelectedFolder(null);
+          if (currentFolderId === folder.id) setCurrentFolderId(null);
           fetchData();
         },
       },
@@ -163,6 +220,14 @@ export default function HomeScreen() {
   };
 
   const handleDelete = (lecture: Lecture) => {
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete "${lecture.title}"?`)) {
+        api.deleteLecture(lecture.id).then(() => {
+          setLectures((prev) => prev.filter((l) => l.id !== lecture.id));
+        });
+      }
+      return;
+    }
     Alert.alert(
       'Delete Lecture',
       `Delete "${lecture.title}"? This cannot be undone.`,
@@ -223,9 +288,9 @@ export default function HomeScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Lecture Notes</Text>
+          <Text style={styles.headerTitle}>{currentFolder ? currentFolder.name : 'Lecture Notes'}</Text>
           <Text style={styles.headerSubtitle}>
-            {lectures.length > 0 ? `${lectures.length} lecture${lectures.length > 1 ? 's' : ''}` : 'AI-powered note taking'}
+            {currentFolder ? 'Folder' : lectures.length > 0 ? `${lectures.length} lecture${lectures.length > 1 ? 's' : ''}` : 'AI-powered note taking'}
           </Text>
         </View>
         <View style={styles.headerIcons}>
@@ -248,59 +313,69 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Folders */}
       <View style={styles.folderSection}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.folderScroll}>
-          {folders.length > 0 && (
+          {currentFolderId !== null && (
             <TouchableOpacity
-              testID="folder-all"
-              style={[styles.folderChip, !selectedFolder && styles.folderChipActive]}
-              onPress={() => setSelectedFolder(null)}
+              testID="folder-back"
+              style={styles.folderChip}
+              onPress={() => {
+                const parent = folders.find(f => f.id === currentFolderId)?.parent_id;
+                setCurrentFolderId(parent || null);
+              }}
             >
-              <Text style={[styles.folderChipText, !selectedFolder && styles.folderChipTextActive]}>All</Text>
+              <Ionicons name="arrow-back" size={14} color={COLORS.primary} />
+              <Text style={[styles.folderChipText, { color: COLORS.primary }]}>Back</Text>
             </TouchableOpacity>
           )}
-          {folders.map((f) => (
-              <TouchableOpacity
-                key={f.id}
-                testID={`folder-${f.id}`}
-                style={[styles.folderChip, selectedFolder === f.id && styles.folderChipActive]}
-                onPress={() => setSelectedFolder(selectedFolder === f.id ? null : f.id)}
-                onLongPress={() => handleDeleteFolder(f)}
-              >
-                <Ionicons name="folder" size={14} color={selectedFolder === f.id ? COLORS.primary : COLORS.textMuted} />
-                <Text style={[styles.folderChipText, selectedFolder === f.id && styles.folderChipTextActive]}>{f.name}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              testID="add-folder-button"
-              style={styles.addFolderChip}
-              onPress={() => setShowNewFolder(true)}
+          {currentFolderId === null && (
+            <View
+              style={[styles.folderChip, styles.folderChipActive]}
             >
-              <Ionicons name="add" size={16} color={COLORS.primary} />
-            </TouchableOpacity>
-          </ScrollView>
-          {showNewFolder && (
-            <View style={styles.newFolderRow}>
-              <TextInput
-                testID="new-folder-input"
-                style={styles.newFolderInput}
-                placeholder="Folder name..."
-                placeholderTextColor={COLORS.textMuted}
-                value={newFolderName}
-                onChangeText={setNewFolderName}
-                onSubmitEditing={handleCreateFolder}
-                autoFocus
-              />
-              <TouchableOpacity testID="save-folder-btn" onPress={handleCreateFolder} style={styles.saveFolderBtn}>
-                <Ionicons name="checkmark" size={20} color={COLORS.textWhite} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => { setShowNewFolder(false); setNewFolderName(''); }} style={styles.cancelFolderBtn}>
-                <Ionicons name="close" size={20} color={COLORS.textMuted} />
-              </TouchableOpacity>
+              <Text style={[styles.folderChipText, styles.folderChipTextActive]}>All Folders</Text>
             </View>
           )}
-        </View>
+          {filteredFolders.map((f) => (
+            <TouchableOpacity
+              key={f.id}
+              testID={`folder-${f.id}`}
+              style={styles.folderChip}
+              onPress={() => setCurrentFolderId(f.id)}
+              onLongPress={() => handleDeleteFolder(f)}
+            >
+              <Ionicons name="folder" size={14} color={COLORS.textMuted} />
+              <Text style={styles.folderChipText}>{f.name}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            testID="add-folder-button"
+            style={styles.addFolderChip}
+            onPress={() => setShowNewFolder(true)}
+          >
+            <Ionicons name="add" size={16} color={COLORS.primary} />
+          </TouchableOpacity>
+        </ScrollView>
+        {showNewFolder && (
+          <View style={styles.newFolderRow}>
+            <TextInput
+              testID="new-folder-input"
+              style={styles.newFolderInput}
+              placeholder="Folder name..."
+              placeholderTextColor={COLORS.textMuted}
+              value={newFolderName}
+              onChangeText={setNewFolderName}
+              onSubmitEditing={handleCreateFolder}
+              autoFocus
+            />
+            <TouchableOpacity testID="save-folder-btn" onPress={handleCreateFolder} style={styles.saveFolderBtn}>
+              <Ionicons name="checkmark" size={20} color={COLORS.textWhite} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setShowNewFolder(false); setNewFolderName(''); }} style={styles.cancelFolderBtn}>
+              <Ionicons name="close" size={20} color={COLORS.textMuted} />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
 
       {/* Lecture List */}
       <FlatList
@@ -312,6 +387,7 @@ export default function HomeScreen() {
             lecture={item}
             onPress={() => handleLecturePress(item)}
             onDelete={() => handleDelete(item)}
+            onLongPress={() => handleRenameLecture(item)}
           />
         )}
         ListEmptyComponent={renderEmptyState}
@@ -484,7 +560,7 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 32,
+    bottom: 64, // Increased to avoid bottom navigation bar overlap
     alignSelf: 'center',
     width: 64,
     height: 64,

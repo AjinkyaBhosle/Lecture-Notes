@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +24,30 @@ export default function FlashcardsScreen() {
   const [loading, setLoading] = useState(true);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const flipAnim = useRef(new Animated.Value(0)).current;
+
+  const flipCard = () => {
+    const toValue = flipped ? 0 : 1;
+    Animated.spring(flipAnim, {
+      toValue,
+      friction: 8,
+      tension: 10,
+      useNativeDriver: true,
+    }).start();
+    setFlipped(!flipped);
+  };
+
+  const frontInterpolate = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+  const backInterpolate = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['180deg', '360deg'],
+  });
+
+  const frontAnimStyle = { transform: [{ rotateY: frontInterpolate }] };
+  const backAnimStyle = { transform: [{ rotateY: backInterpolate }] };
 
   useEffect(() => {
     if (id) loadFlashcards();
@@ -49,11 +74,14 @@ export default function FlashcardsScreen() {
 
   const nextCard = () => {
     setFlipped(false);
+    // Reset flip animation immediately before switching card
+    flipAnim.setValue(0);
     setCurrentIdx((prev) => Math.min(prev + 1, flashcards.length - 1));
   };
 
   const prevCard = () => {
     setFlipped(false);
+    flipAnim.setValue(0);
     setCurrentIdx((prev) => Math.max(prev - 1, 0));
   };
 
@@ -110,19 +138,26 @@ export default function FlashcardsScreen() {
         <View style={[styles.progressFill, { width: `${((currentIdx + 1) / flashcards.length) * 100}%` }]} />
       </View>
 
-      {/* Card */}
+      {/* Card with 3D flip animation */}
       <View style={styles.cardSection}>
         <TouchableOpacity
           testID="flashcard-tap"
-          style={[styles.card, flipped && styles.cardFlipped]}
-          onPress={() => setFlipped(!flipped)}
-          activeOpacity={0.9}
+          onPress={flipCard}
+          activeOpacity={1}
+          style={styles.cardTouchable}
         >
-          <Text style={styles.cardLabel}>{flipped ? 'ANSWER' : 'QUESTION'}</Text>
-          <Text style={[styles.cardText, flipped && styles.cardTextFlipped]}>
-            {flipped ? card.back : card.front}
-          </Text>
-          <Text style={styles.tapHint}>Tap to {flipped ? 'see question' : 'reveal answer'}</Text>
+          {/* Front face */}
+          <Animated.View style={[styles.card, frontAnimStyle]}>
+            <Text style={styles.cardLabel}>QUESTION</Text>
+            <Text style={styles.cardText}>{card.front}</Text>
+            <Text style={styles.tapHint}>Tap to reveal answer</Text>
+          </Animated.View>
+          {/* Back face */}
+          <Animated.View style={[styles.card, styles.cardFlipped, styles.cardBack, backAnimStyle]}>
+            <Text style={[styles.cardLabel, { color: COLORS.success }]}>ANSWER</Text>
+            <Text style={[styles.cardText, styles.cardTextFlipped]}>{card.back}</Text>
+            <Text style={styles.tapHint}>Tap to see question</Text>
+          </Animated.View>
         </TouchableOpacity>
       </View>
 
@@ -174,6 +209,10 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: FONT_SIZES.lg, fontWeight: '600', color: COLORS.textPrimary },
   loadingSubtext: { fontSize: FONT_SIZES.sm, color: COLORS.textMuted },
   cardSection: { flex: 1, justifyContent: 'center', paddingHorizontal: SPACING.xl },
+  cardTouchable: {
+    // Container for both card faces stacked
+    height: 300,
+  },
   card: {
     backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.xl,
     padding: SPACING.xxl, minHeight: 280,
@@ -181,6 +220,14 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: COLORS.primary,
     elevation: 4, shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12,
+    backfaceVisibility: 'hidden',
+  },
+  cardBack: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   cardFlipped: { backgroundColor: COLORS.primaryLight, borderColor: COLORS.success },
   cardLabel: {
